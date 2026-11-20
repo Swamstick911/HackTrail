@@ -17,6 +17,7 @@
   "include": [
     "src",
     "web/src",
+    "extensions/vscode/src",
     "tests",
     "vite.config.ts",
     "vitest.config.ts",

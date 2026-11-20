@@ -10,6 +10,9 @@ export const eventKinds = [
   'editor_edit',
   'editor_focus',
   'git_commit',
+  'work_note',
+  'agent_started',
+  'agent_stopped',
 ] as const;
 
 const identifier = z
@@ -36,6 +39,8 @@ export const eventSchema = z
         toolName: shortText.optional(),
         callId: shortText.optional(),
         model: shortText.optional(),
+        sessionId: shortText.optional(),
+        hook: shortText.optional(),
         success: z.boolean().optional(),
         excerpt: z.string().max(500).optional(),
       })
@@ -94,4 +99,7 @@ export const kindLabels: Record<EventKind, string> = {
   editor_edit: 'Editor change',
   editor_focus: 'Editor focus',
   git_commit: 'Git commit',
+  work_note: 'Work note',
+  agent_started: 'Agent started',
+  agent_stopped: 'Agent finished',
 };

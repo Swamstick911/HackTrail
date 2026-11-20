@@ -1,16 +1,23 @@
 {
   "name": "hacktrail",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
+  "overrides": {
+    "@vscode/vsce": {
+      "minimatch": "11.0.1"
+    }
+  },
   "engines": {
     "node": ">=26.0.0 <27"
   },
   "scripts": {
     "dev:server": "tsx watch src/server/main.ts",
     "dev:web": "vite --host 127.0.0.1",
-    "build": "tsc -p tsconfig.server.json && vite build",
+    "build": "tsc -p tsconfig.server.json && vite build && node scripts/build-adapters.mjs && node scripts/package-extension.mjs",
+    "package:extension": "node scripts/build-adapters.mjs && node scripts/package-extension.mjs",
+    "connect:claude": "node dist/cli/connect-claude.js",
     "start": "node dist/server/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -34,7 +41,10 @@
     "@types/node": "26.6.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@types/vscode": "1.100.0",
     "@vitejs/plugin-react": "6.3.0",
+    "@vscode/vsce": "4.1.1",
+    "esbuild": "0.28.2",
     "prettier": "3.10.1",
     "tsx": "4.23.15",
     "typescript": "7.0.2",

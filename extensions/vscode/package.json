@@ -1,0 +1,47 @@
+{
+  "name": "hacktrail",
+  "displayName": "HackTrail",
+  "description": "Local project time tracking from editor activity, with an automatic idle cutoff.",
+  "version": "0.2.0",
+  "publisher": "swamstick911",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Swamstick911/HackTrail.git"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "hacktrail.connect",
+        "title": "HackTrail: Connect This Workspace"
+      },
+      {
+        "command": "hacktrail.toggleTracking",
+        "title": "HackTrail: Pause or Resume Tracking"
+      },
+      {
+        "command": "hacktrail.openDashboard",
+        "title": "HackTrail: Open Dashboard"
+      }
+    ]
+  }
+}

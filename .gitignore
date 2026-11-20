@@ -7,4 +7,7 @@ test-results/
 coverage/
 .env
 .DS_Store
+releases/
+extensions/vscode/LICENSE
+*.vsix
 

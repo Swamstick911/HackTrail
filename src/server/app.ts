@@ -2,11 +2,14 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { actors, sources, eventSchema } from '../shared/events.js';
 import { importClaude, maxImportBytes } from './claude-import.js';
 import { seedExample } from './example.js';
 import { ActivityStore, StoreError } from './store.js';
+import { heartbeatSchema } from '../shared/tracking.js';
 
 interface AppOptions {
   store: ActivityStore;
@@ -14,6 +17,7 @@ interface AppOptions {
   port: number;
   webRoot?: string;
   development?: boolean;
+  extensionPath?: string;
 }
 
 const importSchema = z
@@ -89,7 +93,7 @@ export function createApp(options: AppOptions) {
     return reply.code(500).send({ error: 'The local collector could not complete the request.' });
   });
 
-  app.get('/api/health', async () => ({ status: 'ok', version: '0.1.0' }));
+  app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }));
   app.get('/api/session', async () => ({ token: options.token }));
   app.get('/api/projects', async () => options.store.listProjects());
   app.post('/api/projects', async (request, reply) => {
@@ -150,6 +154,65 @@ export function createApp(options: AppOptions) {
     return { ...options.store.ingest(parsed.events), ignoredRecords: parsed.ignoredRecords };
   });
   app.post('/api/example', async () => seedExample(options.store));
+
+  app.post('/api/tracking/heartbeat', async (request) =>
+    options.store.tracking.heartbeat(heartbeatSchema.parse(request.body)),
+  );
+  app.post('/api/tracking/pause', async (request) => {
+    const input = z.object({ paused: z.boolean() }).strict().parse(request.body);
+    return options.store.tracking.pause(input.paused);
+  });
+  app.get<{ Params: { id: string } }>('/api/projects/:id/work', async (request) => {
+    options.store.getProject(request.params.id);
+    const range = z
+      .object({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) })
+      .strict()
+      .parse(request.query);
+    const from = Date.parse(range.from);
+    const to = Date.parse(range.to);
+    if (to <= from || to - from > 32 * 24 * 60 * 60 * 1000)
+      throw new StoreError('Choose a time range of up to 32 days.', 400);
+    return {
+      tracking: options.store.tracking.report(request.params.id, from, to),
+      review: options.store.review(
+        request.params.id,
+        new Date(from).toISOString(),
+        new Date(to).toISOString(),
+      ),
+    };
+  });
+  app.post<{ Params: { id: string } }>('/api/projects/:id/notes', async (request) => {
+    options.store.getProject(request.params.id);
+    const { text } = z
+      .object({ text: z.string().trim().min(1).max(500) })
+      .strict()
+      .parse(request.body);
+    return options.store.ingest([
+      {
+        schemaVersion: 1,
+        id: randomUUID(),
+        projectId: request.params.id,
+        occurredAt: new Date().toISOString(),
+        source: 'manual',
+        actor: 'user',
+        kind: 'work_note',
+        metadata: { excerpt: text },
+      },
+    ]);
+  });
+  app.get('/api/integrations', async () => ({
+    editorDownloadAvailable: Boolean(options.extensionPath && existsSync(options.extensionPath)),
+  }));
+  app.get('/api/integrations/vscode', async (_request, reply) => {
+    if (!options.extensionPath || !existsSync(options.extensionPath))
+      throw new StoreError(
+        'Build the extension package with npm run package:extension first.',
+        404,
+      );
+    reply.header('Content-Type', 'application/octet-stream');
+    reply.header('Content-Disposition', 'attachment; filename="hacktrail.vsix"');
+    return reply.send(createReadStream(options.extensionPath));
+  });
 
   if (options.webRoot && existsSync(options.webRoot)) {
     app.register(fastifyStatic, { root: options.webRoot, index: 'index.html' });

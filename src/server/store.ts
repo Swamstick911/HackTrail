@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import { TrackingStore } from './tracking-store.js';
+import { reviewActivity } from '../shared/review.js';
 import {
   eventSchema,
   type ActivityEvent,
@@ -42,6 +44,7 @@ export interface TimelineQuery {
 
 export class ActivityStore {
   private database: Database.Database;
+  readonly tracking: TrackingStore;
 
   constructor(filePath: string) {
     this.database = new Database(filePath);
@@ -58,9 +61,10 @@ export class ActivityStore {
         'occurred_at TEXT NOT NULL, source TEXT NOT NULL, actor TEXT NOT NULL,',
         'kind TEXT NOT NULL, payload TEXT NOT NULL);',
         'CREATE INDEX IF NOT EXISTS events_project_time ON events(project_id, occurred_at DESC, id DESC);',
-        'PRAGMA user_version = 1;',
       ].join('\n'),
     );
+    this.tracking = new TrackingStore(this.database);
+    this.database.pragma('user_version = 2');
   }
 
   close() {
@@ -101,6 +105,16 @@ export class ActivityStore {
   deleteProject(id: string) {
     this.getProject(id);
     this.database.prepare('DELETE FROM projects WHERE id = ?').run(id);
+  }
+
+  review(id: string, from: string, to: string) {
+    this.getProject(id);
+    const rows = this.database
+      .prepare(
+        'SELECT payload FROM events WHERE project_id = ? AND occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at, id',
+      )
+      .all(id, from, to) as EventRow[];
+    return reviewActivity(rows.map((row) => JSON.parse(row.payload) as ActivityEvent));
   }
 
   ingest(input: ActivityEvent[]) {
@@ -222,6 +236,7 @@ export class ActivityStore {
       exportedAt: new Date().toISOString(),
       project,
       notice: 'Recorded activity is not verified human working time.',
+      tracking: this.tracking.export(id),
       events: rows.map((row) => JSON.parse(row.payload) as ActivityEvent),
     };
   }

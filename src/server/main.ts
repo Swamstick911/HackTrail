@@ -34,6 +34,7 @@ const app = createApp({
   token,
   port,
   webRoot: resolve(directory, '../web'),
+  extensionPath: resolve(directory, '../../releases/hacktrail.vsix'),
   development: directory.includes('/src/server') || directory.includes('\\src\\server'),
 });
 let closing = false;
