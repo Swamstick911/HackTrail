@@ -1,0 +1,8 @@
+LICENSE
+package-lock.json
+dist
+node_modules
+.hacktrail
+test-results
+playwright-report
+coverage

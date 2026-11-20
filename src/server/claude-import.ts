@@ -7,7 +7,9 @@ const maxImportEvents = 20_000;
 type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown): JsonRecord | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : null;
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
 }
 
 function digest(value: string) {
@@ -24,8 +26,10 @@ export function importClaude(input: {
   text: string;
   includeExcerpts: boolean;
 }) {
-  if (Buffer.byteLength(input.text) > maxImportBytes) throw new StoreError('Choose a transcript smaller than 10 MB.', 413);
-  if (!/^[^/\\\u0000-\u001f]{1,255}$/.test(input.fileName)) throw new StoreError('Use a file name without a directory path.', 400);
+  if (Buffer.byteLength(input.text) > maxImportBytes)
+    throw new StoreError('Choose a transcript smaller than 10 MB.', 413);
+  if (!/^[^/\\\u0000-\u001f]{1,255}$/.test(input.fileName))
+    throw new StoreError('Use a file name without a directory path.', 400);
   const events: ActivityEvent[] = [];
   let ignoredRecords = 0;
   let recognizedRecords = 0;
@@ -35,11 +39,22 @@ export function importClaude(input: {
     const line = lines[lineIndex]!;
     if (!line.trim()) continue;
     let value: unknown;
-    try { value = JSON.parse(line); }
-    catch { throw new StoreError('Invalid JSON on line ' + (lineIndex + 1) + '. Nothing was imported.', 422); }
+    try {
+      value = JSON.parse(line);
+    } catch {
+      throw new StoreError(
+        'Invalid JSON on line ' + (lineIndex + 1) + '. Nothing was imported.',
+        422,
+      );
+    }
     const entry = record(value);
     const message = record(entry?.message);
-    if (!entry || !message || entry.isMeta === true || !['user', 'assistant'].includes(String(entry.type))) {
+    if (
+      !entry ||
+      !message ||
+      entry.isMeta === true ||
+      !['user', 'assistant'].includes(String(entry.type))
+    ) {
       ignoredRecords++;
       continue;
     }
@@ -47,11 +62,17 @@ export function importClaude(input: {
       throw new StoreError('Missing or invalid timestamp on line ' + (lineIndex + 1) + '.', 422);
     }
     const role = message.role;
-    if (role !== 'user' && role !== 'assistant') { ignoredRecords++; continue; }
+    if (role !== 'user' && role !== 'assistant') {
+      ignoredRecords++;
+      continue;
+    }
     recognizedRecords++;
-    const blocks = typeof message.content === 'string'
-      ? [{ type: 'text', text: message.content }]
-      : Array.isArray(message.content) ? message.content : [];
+    const blocks =
+      typeof message.content === 'string'
+        ? [{ type: 'text', text: message.content }]
+        : Array.isArray(message.content)
+          ? message.content
+          : [];
     const sessionId = shortString(entry.sessionId) ?? input.fileName;
     const recordId = shortString(entry.uuid) ?? digest(line);
     const occurredAt = new Date(entry.timestamp).toISOString();
@@ -80,15 +101,29 @@ export function importClaude(input: {
         continue;
       }
       if (role === 'assistant') metadata.model = shortString(message.model);
-      events.push(eventSchema.parse({
-        schemaVersion: 1,
-        id: digest([input.projectId, sessionId, recordId, blockIndex].join(':')),
-        projectId: input.projectId, occurredAt, source: 'claude-code', actor, kind, metadata,
-        evidence: { fileName: input.fileName, line: lineIndex + 1, block: blockIndex },
-      }));
-      if (events.length > maxImportEvents) throw new StoreError('This file exceeds the 20,000 event import limit.', 413);
+      events.push(
+        eventSchema.parse({
+          schemaVersion: 1,
+          id: digest([input.projectId, sessionId, recordId, blockIndex].join(':')),
+          projectId: input.projectId,
+          occurredAt,
+          source: 'claude-code',
+          actor,
+          kind,
+          metadata,
+          evidence: { fileName: input.fileName, line: lineIndex + 1, block: blockIndex },
+        }),
+      );
+      if (events.length > maxImportEvents)
+        throw new StoreError('This file exceeds the 20,000 event import limit.', 413);
     }
   }
-  if (!events.length) throw new StoreError('No supported Claude Code activity was found in this file.', 422);
-  return { events, ignoredRecords, recognizedRecords, recordCount: lines.filter(line => line.trim()).length };
+  if (!events.length)
+    throw new StoreError('No supported Claude Code activity was found in this file.', 422);
+  return {
+    events,
+    ignoredRecords,
+    recognizedRecords,
+    recordCount: lines.filter((line) => line.trim()).length,
+  };
 }

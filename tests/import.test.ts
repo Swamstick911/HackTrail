@@ -3,16 +3,27 @@ import { importClaude } from '../src/server/claude-import.js';
 import { ActivityStore } from '../src/server/store.js';
 import { transcript } from './fixtures.js';
 
-const input = () => ({ projectId: 'project-one', fileName: 'session.jsonl', text: transcript(), includeExcerpts: false });
+const input = () => ({
+  projectId: 'project-one',
+  fileName: 'session.jsonl',
+  text: transcript(),
+  includeExcerpts: false,
+});
 
 describe('explicit Claude import', () => {
   it('keeps tool results separate from user messages', () => {
     const result = importClaude(input());
-    expect(result.events.map(event => [event.actor, event.kind])).toEqual([
-      ['user', 'user_prompt'], ['agent', 'agent_response'],
-      ['agent', 'tool_call'], ['tool', 'tool_result'],
+    expect(result.events.map((event) => [event.actor, event.kind])).toEqual([
+      ['user', 'user_prompt'],
+      ['agent', 'agent_response'],
+      ['agent', 'tool_call'],
+      ['tool', 'tool_result'],
     ]);
-    expect(result.events.at(-1)?.evidence).toEqual({ fileName: 'session.jsonl', line: 4, block: 0 });
+    expect(result.events.at(-1)?.evidence).toEqual({
+      fileName: 'session.jsonl',
+      line: 4,
+      block: 0,
+    });
   });
 
   it('excludes message text, reasoning, commands, and tool output by default', () => {
@@ -31,10 +42,16 @@ describe('explicit Claude import', () => {
     const original = importClaude(input());
     const appended = importClaude({
       ...input(),
-      text: transcript() + '\n' + JSON.stringify({
-        type: 'user', uuid: 'new-message', sessionId: 'session-one',
-        timestamp: '2026-11-20T09:03:00Z', message: { role: 'user', content: 'Next task' },
-      }),
+      text:
+        transcript() +
+        '\n' +
+        JSON.stringify({
+          type: 'user',
+          uuid: 'new-message',
+          sessionId: 'session-one',
+          timestamp: '2026-11-20T09:03:00Z',
+          message: { role: 'user', content: 'Next task' },
+        }),
     });
     expect(appended.events.slice(0, 4)).toEqual(original.events);
     const store = new ActivityStore(':memory:');
@@ -45,11 +62,15 @@ describe('explicit Claude import', () => {
   });
 
   it('rejects malformed and partial records with a line number', () => {
-    expect(() => importClaude({ ...input(), text: transcript() + '\n{"unfinished":' })).toThrow('line 5');
+    expect(() => importClaude({ ...input(), text: transcript() + '\n{"unfinished":' })).toThrow(
+      'line 5',
+    );
   });
 
   it('rejects absolute paths and unsupported files', () => {
-    expect(() => importClaude({ ...input(), fileName: '/Users/private/session.jsonl' })).toThrow('file name');
+    expect(() => importClaude({ ...input(), fileName: '/Users/private/session.jsonl' })).toThrow(
+      'file name',
+    );
     expect(() => importClaude({ ...input(), text: '{"type":"system"}' })).toThrow('No supported');
   });
 });

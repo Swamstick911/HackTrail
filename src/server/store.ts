@@ -1,9 +1,20 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { eventSchema, type ActivityEvent, type Project, type ProjectSummary, type TimelinePage, type Actor, type Source } from '../shared/events.js';
+import {
+  eventSchema,
+  type ActivityEvent,
+  type Project,
+  type ProjectSummary,
+  type TimelinePage,
+  type Actor,
+  type Source,
+} from '../shared/events.js';
 
 export class StoreError extends Error {
-  constructor(message: string, public statusCode: number) {
+  constructor(
+    message: string,
+    public statusCode: number,
+  ) {
     super(message);
   }
 }
@@ -37,17 +48,19 @@ export class ActivityStore {
     this.database.pragma('journal_mode = WAL');
     this.database.pragma('foreign_keys = ON');
     this.database.pragma('busy_timeout = 5000');
-    this.database.exec([
-      'CREATE TABLE IF NOT EXISTS projects (',
-      'id TEXT PRIMARY KEY, name TEXT NOT NULL,',
-      'is_example INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);',
-      'CREATE TABLE IF NOT EXISTS events (',
-      'id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,',
-      'occurred_at TEXT NOT NULL, source TEXT NOT NULL, actor TEXT NOT NULL,',
-      'kind TEXT NOT NULL, payload TEXT NOT NULL);',
-      'CREATE INDEX IF NOT EXISTS events_project_time ON events(project_id, occurred_at DESC, id DESC);',
-      'PRAGMA user_version = 1;',
-    ].join('\n'));
+    this.database.exec(
+      [
+        'CREATE TABLE IF NOT EXISTS projects (',
+        'id TEXT PRIMARY KEY, name TEXT NOT NULL,',
+        'is_example INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);',
+        'CREATE TABLE IF NOT EXISTS events (',
+        'id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,',
+        'occurred_at TEXT NOT NULL, source TEXT NOT NULL, actor TEXT NOT NULL,',
+        'kind TEXT NOT NULL, payload TEXT NOT NULL);',
+        'CREATE INDEX IF NOT EXISTS events_project_time ON events(project_id, occurred_at DESC, id DESC);',
+        'PRAGMA user_version = 1;',
+      ].join('\n'),
+    );
   }
 
   close() {
@@ -55,25 +68,32 @@ export class ActivityStore {
   }
 
   listProjects(): Project[] {
-    const rows = this.database.prepare(
-      'SELECT p.*, COUNT(e.id) AS event_count, MAX(e.occurred_at) AS last_event_at ' +
-      'FROM projects p LEFT JOIN events e ON e.project_id = p.id ' +
-      'GROUP BY p.id ORDER BY p.is_example, p.created_at DESC, p.id',
-    ).all() as ProjectRow[];
-    return rows.map(row => ({
-      id: row.id, name: row.name, isExample: Boolean(row.is_example),
-      createdAt: row.created_at, eventCount: row.event_count, lastEventAt: row.last_event_at,
+    const rows = this.database
+      .prepare(
+        'SELECT p.*, COUNT(e.id) AS event_count, MAX(e.occurred_at) AS last_event_at ' +
+          'FROM projects p LEFT JOIN events e ON e.project_id = p.id ' +
+          'GROUP BY p.id ORDER BY p.is_example, p.created_at DESC, p.id',
+      )
+      .all() as ProjectRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      isExample: Boolean(row.is_example),
+      createdAt: row.created_at,
+      eventCount: row.event_count,
+      lastEventAt: row.last_event_at,
     }));
   }
 
   getProject(id: string): Project {
-    const project = this.listProjects().find(item => item.id === id);
+    const project = this.listProjects().find((item) => item.id === id);
     if (!project) throw new StoreError('Project not found.', 404);
     return project;
   }
 
   createProject(name: string, id: string = randomUUID(), isExample = false): Project {
-    this.database.prepare('INSERT INTO projects (id, name, is_example, created_at) VALUES (?, ?, ?, ?)')
+    this.database
+      .prepare('INSERT INTO projects (id, name, is_example, created_at) VALUES (?, ?, ?, ?)')
       .run(id, name, Number(isExample), new Date().toISOString());
     return this.getProject(id);
   }
@@ -84,7 +104,7 @@ export class ActivityStore {
   }
 
   ingest(input: ActivityEvent[]) {
-    const events = input.map(event => eventSchema.parse(event));
+    const events = input.map((event) => eventSchema.parse(event));
     const insert = this.database.prepare(
       'INSERT INTO events (id, project_id, occurred_at, source, actor, kind, payload) VALUES (?, ?, ?, ?, ?, ?, ?)',
     );
@@ -98,11 +118,23 @@ export class ActivityStore {
         const payload = JSON.stringify(event);
         const previous = existing.get(event.id) as EventRow | undefined;
         if (previous) {
-          if (previous.payload !== payload) throw new StoreError('An event with this ID has different contents. No events were saved.', 409);
+          if (previous.payload !== payload)
+            throw new StoreError(
+              'An event with this ID has different contents. No events were saved.',
+              409,
+            );
           duplicates++;
           continue;
         }
-        insert.run(event.id, event.projectId, event.occurredAt, event.source, event.actor, event.kind, payload);
+        insert.run(
+          event.id,
+          event.projectId,
+          event.occurredAt,
+          event.source,
+          event.actor,
+          event.kind,
+          payload,
+        );
         inserted++;
       }
       return { inserted, duplicates };
@@ -113,56 +145,84 @@ export class ActivityStore {
     this.getProject(projectId);
     const conditions = ['project_id = ?'];
     const values: (string | number)[] = [projectId];
-    if (query.actor) { conditions.push('actor = ?'); values.push(query.actor); }
-    if (query.source) { conditions.push('source = ?'); values.push(query.source); }
+    if (query.actor) {
+      conditions.push('actor = ?');
+      values.push(query.actor);
+    }
+    if (query.source) {
+      conditions.push('source = ?');
+      values.push(query.source);
+    }
     if (query.search) {
       conditions.push("payload LIKE ? ESCAPE '\\'");
       values.push('%' + query.search.replace(/[\\%_]/g, '\\$&') + '%');
     }
-    const total = this.database.prepare('SELECT COUNT(*) AS count FROM events WHERE ' + conditions.join(' AND '))
+    const total = this.database
+      .prepare('SELECT COUNT(*) AS count FROM events WHERE ' + conditions.join(' AND '))
       .get(...values) as { count: number };
     if (query.cursor) {
       let cursor: unknown;
-      try { cursor = JSON.parse(Buffer.from(query.cursor, 'base64url').toString()); }
-      catch { throw new StoreError('Invalid timeline cursor.', 400); }
-      if (!Array.isArray(cursor) || cursor.length !== 2 || !cursor.every(value => typeof value === 'string')) {
+      try {
+        cursor = JSON.parse(Buffer.from(query.cursor, 'base64url').toString());
+      } catch {
+        throw new StoreError('Invalid timeline cursor.', 400);
+      }
+      if (
+        !Array.isArray(cursor) ||
+        cursor.length !== 2 ||
+        !cursor.every((value) => typeof value === 'string')
+      ) {
         throw new StoreError('Invalid timeline cursor.', 400);
       }
       conditions.push('(occurred_at < ? OR (occurred_at = ? AND id < ?))');
       values.push(cursor[0]!, cursor[0]!, cursor[1]!);
     }
-    const rows = this.database.prepare(
-      'SELECT payload FROM events WHERE ' + conditions.join(' AND ') +
-      ' ORDER BY occurred_at DESC, id DESC LIMIT ?',
-    ).all(...values, query.limit + 1) as EventRow[];
-    const events = rows.slice(0, query.limit).map(row => JSON.parse(row.payload) as ActivityEvent);
+    const rows = this.database
+      .prepare(
+        'SELECT payload FROM events WHERE ' +
+          conditions.join(' AND ') +
+          ' ORDER BY occurred_at DESC, id DESC LIMIT ?',
+      )
+      .all(...values, query.limit + 1) as EventRow[];
+    const events = rows
+      .slice(0, query.limit)
+      .map((row) => JSON.parse(row.payload) as ActivityEvent);
     const last = events.at(-1);
-    const nextCursor = rows.length > query.limit && last
-      ? Buffer.from(JSON.stringify([last.occurredAt, last.id])).toString('base64url') : null;
+    const nextCursor =
+      rows.length > query.limit && last
+        ? Buffer.from(JSON.stringify([last.occurredAt, last.id])).toString('base64url')
+        : null;
     return { events, total: total.count, nextCursor };
   }
 
   summary(projectId: string): ProjectSummary {
     this.getProject(projectId);
-    const counts = this.database.prepare(
-      "SELECT COUNT(*) AS total, COALESCE(SUM(kind = 'user_prompt'), 0) AS userMessages, " +
-      "COALESCE(SUM(actor = 'agent'), 0) AS agentEvents, COALESCE(SUM(actor = 'tool'), 0) AS toolEvents, " +
-      'MIN(occurred_at) AS firstEventAt, MAX(occurred_at) AS lastEventAt FROM events WHERE project_id = ?',
-    ).get(projectId) as Omit<ProjectSummary, 'sources'>;
-    const sourceCounts = this.database.prepare(
-      'SELECT source, COUNT(*) AS count FROM events WHERE project_id = ? GROUP BY source ORDER BY source',
-    ).all(projectId) as ProjectSummary['sources'];
+    const counts = this.database
+      .prepare(
+        "SELECT COUNT(*) AS total, COALESCE(SUM(kind = 'user_prompt'), 0) AS userMessages, " +
+          "COALESCE(SUM(actor = 'agent'), 0) AS agentEvents, COALESCE(SUM(actor = 'tool'), 0) AS toolEvents, " +
+          'MIN(occurred_at) AS firstEventAt, MAX(occurred_at) AS lastEventAt FROM events WHERE project_id = ?',
+      )
+      .get(projectId) as Omit<ProjectSummary, 'sources'>;
+    const sourceCounts = this.database
+      .prepare(
+        'SELECT source, COUNT(*) AS count FROM events WHERE project_id = ? GROUP BY source ORDER BY source',
+      )
+      .all(projectId) as ProjectSummary['sources'];
     return { ...counts, sources: sourceCounts };
   }
 
   exportProject(id: string) {
     const project = this.getProject(id);
-    const rows = this.database.prepare('SELECT payload FROM events WHERE project_id = ? ORDER BY occurred_at, id')
+    const rows = this.database
+      .prepare('SELECT payload FROM events WHERE project_id = ? ORDER BY occurred_at, id')
       .all(id) as EventRow[];
     return {
-      format: 'hacktrail-activity-v1', exportedAt: new Date().toISOString(), project,
+      format: 'hacktrail-activity-v1',
+      exportedAt: new Date().toISOString(),
+      project,
       notice: 'Recorded activity is not verified human working time.',
-      events: rows.map(row => JSON.parse(row.payload) as ActivityEvent),
+      events: rows.map((row) => JSON.parse(row.payload) as ActivityEvent),
     };
   }
 }

@@ -12,7 +12,10 @@ describe('local collector API', () => {
     store.createProject('Project', 'project-one');
     app = createApp({ store, token: 'test-token', port: 47654 });
   });
-  afterEach(async () => { await app.close(); store.close(); });
+  afterEach(async () => {
+    await app.close();
+    store.close();
+  });
 
   it('requires authentication for project data and mutations', async () => {
     const response = await app.inject({ url: '/api/projects', headers: { host: headers.host } });
@@ -31,20 +34,45 @@ describe('local collector API', () => {
   });
 
   it('rejects unsupported event fields and accepts valid event batches', async () => {
-    const invalid = await app.inject({ method: 'POST', url: '/api/events', headers, payload: { events: [{ ...activity(), prompt: 'secret' }] } });
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/events',
+      headers,
+      payload: { events: [{ ...activity(), prompt: 'secret' }] },
+    });
     expect(invalid.statusCode).toBe(400);
-    const valid = await app.inject({ method: 'POST', url: '/api/events', headers, payload: { events: [activity()] } });
+    const valid = await app.inject({
+      method: 'POST',
+      url: '/api/events',
+      headers,
+      payload: { events: [activity()] },
+    });
     expect(valid.json()).toEqual({ inserted: 1, duplicates: 0 });
   });
 
   it('previews imports without persisting and commits them idempotently', async () => {
     const payload = { projectId: 'project-one', fileName: 'session.jsonl', text: transcript() };
-    const preview = await app.inject({ method: 'POST', url: '/api/imports/preview', headers, payload });
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/imports/preview',
+      headers,
+      payload,
+    });
     expect(preview.json().eventCount).toBe(4);
     expect(store.summary('project-one').total).toBe(0);
-    const first = await app.inject({ method: 'POST', url: '/api/imports/claude', headers, payload });
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/imports/claude',
+      headers,
+      payload,
+    });
     expect(first.json().inserted).toBe(4);
-    const second = await app.inject({ method: 'POST', url: '/api/imports/claude', headers, payload });
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/imports/claude',
+      headers,
+      payload,
+    });
     expect(second.json().duplicates).toBe(4);
   });
 
@@ -53,7 +81,11 @@ describe('local collector API', () => {
     const exported = await app.inject({ url: '/api/projects/project-one/export', headers });
     expect(exported.json().events).toHaveLength(1);
     expect(exported.headers['content-disposition']).toContain('attachment');
-    const deleted = await app.inject({ method: 'DELETE', url: '/api/projects/project-one', headers });
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/api/projects/project-one',
+      headers,
+    });
     expect(deleted.statusCode).toBe(204);
     expect(store.listProjects()).toHaveLength(0);
   });
