@@ -74,6 +74,6 @@ The stack is TypeScript, Fastify, SQLite, and React with Vite. See the [API cont
 
 This release supports explicit Claude transcript imports. Live editor and agent integrations, Git linking, review summaries, accounts, and time estimates come later. User-role messages do not verify human presence; tool results are recorded separately as tool activity.
 
-Automated checks cover macOS, Windows, and Linux in CI. Performance on the Dell Inspiron 5775 still needs an actual device test. Phase 1 is the local foundation, not a complete bounty submission.
+CI is configured for macOS, Windows, and Linux. Platform support remains provisional until those checks run successfully. Performance on the Dell Inspiron 5775 still needs an actual device test. Phase 1 is the local foundation, not a complete bounty submission.
 
 Licensed under [GNU AGPLv3](LICENSE).
