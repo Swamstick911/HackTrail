@@ -34,4 +34,3 @@ Later phases add resume views, review workflows, accounts, public profiles, broa
 ## Commits
 
 Use conventional commits with the repository owner's identity. No co-author or generated-by trailers.
-
