@@ -1,5 +1,7 @@
 # Phase 1 implementation plan
 
+This records the original Phase 1 scope. Version 0.2 has since added the [live tracking workflow](live-tracking.md).
+
 Deliver a local collector and timeline before live integrations or time estimates.
 
 ## Scope

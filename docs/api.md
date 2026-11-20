@@ -50,11 +50,11 @@ Use the project ID returned by project creation. A batch body has an `events` ar
 
 - Sources: `claude-code`, `vscode`, `git`, `manual`.
 - Actors: `user`, `agent`, `tool`, `unknown`.
-- Kinds: `user_prompt`, `agent_response`, `tool_call`, `tool_result`, `editor_edit`, `editor_focus`, `git_commit`.
-- Optional metadata: `toolName`, `callId`, and `model` up to 160 characters; `success` as a boolean; `excerpt` up to 500 characters.
+- Kinds: `user_prompt`, `agent_response`, `tool_call`, `tool_result`, `editor_edit`, `editor_focus`, `git_commit`, `work_note`, `agent_started`, `agent_stopped`.
+- Optional metadata: `toolName`, `callId`, `model`, `sessionId`, and `hook` up to 160 characters; `success` as a boolean; `excerpt` up to 500 characters.
 - Optional evidence: `{ "fileName": "session.jsonl", "line": 1, "block": 0 }`. Lines start at 1; blocks start at 0. Directory paths are rejected.
 
-Unknown fields are rejected. Timestamps must include a timezone and are normalized to UTC. Actor and source values are supplied evidence labels, not verified identities. The schema reserves editor and Git values for future adapters; no such adapters ship in Phase 1.
+Unknown fields are rejected. Timestamps must include a timezone and are normalized to UTC. Actor and source values are supplied evidence labels, not verified identities. The VS Code adapter uses the timing endpoint below. Git event kinds remain reserved for a future adapter.
 
 The response is `{ "inserted": 1, "duplicates": 0 }`. Replaying an identical normalized event ID is safe. Reusing an ID with different contents returns 409 and rolls back the entire batch.
 
@@ -71,6 +71,49 @@ Optional query parameters:
 | `cursor`  | Opaque `nextCursor` from the previous response   |
 
 Responses contain `events`, `total`, and `nextCursor`. Events are newest first, ordered by timestamp and ID. Keep the filters unchanged when following a cursor. Counts describe recorded activity and do not award hours.
+
+## Live tracking
+
+| Method | Path                   | Behavior                                              |
+| ------ | ---------------------- | ----------------------------------------------------- |
+| POST   | `/tracking/heartbeat`  | Record an editor heartbeat and up to 500 time samples |
+| POST   | `/tracking/pause`      | Pause or resume all editor collection                 |
+| GET    | `/projects/:id/work`   | Read time slices and the review summary for a range   |
+| POST   | `/projects/:id/notes`  | Save a work note from `{ "text": "What changed" }`    |
+| GET    | `/integrations`        | Report whether the VSIX package is available          |
+| GET    | `/integrations/vscode` | Download the built VS Code extension                  |
+
+`POST /tracking/heartbeat` accepts:
+
+```json
+{
+  "clientId": "editor-workspace-001",
+  "projectId": "replace-with-project-id",
+  "label": "VS Code",
+  "state": "active",
+  "samples": [
+    {
+      "id": "sample-unique-001",
+      "projectId": "replace-with-project-id",
+      "startedAt": "2026-11-20T10:00:00Z",
+      "endedAt": "2026-11-20T10:00:15Z",
+      "signal": "keyboard"
+    }
+  ]
+}
+```
+
+Use current timestamps. States are `active`, `idle`, or `paused`; signals are `keyboard` or `mouse`. Empty sample arrays update connection status without claiming time. Samples must belong to the selected project, last at most 30 seconds, and be no more than seven days old or five seconds in the future.
+
+The response contains `inserted`, `duplicates`, `creditedMs`, and `paused`. Here `creditedMs` means milliseconds retained by the estimator after removing overlaps and paused periods. It is not approved or verified human time.
+
+Replays require the same sample content and client ID. Overlaps are removed across all projects, with first acceptance deciding attribution. An invalid or conflicting sample rolls back the whole batch.
+
+`POST /tracking/pause` accepts `{ "paused": true }` or `false`. Pause intervals persist across restarts and apply to delayed uploads too.
+
+`GET /projects/:id/work?from=...&to=...` requires ISO timestamps for a range of up to 32 days. It returns `tracking` with counted slices, total milliseconds, clients, pause state, and policy; and `review` with event counts, notes, agent elapsed time, and incomplete runs. Clients become disconnected after 45 seconds without a heartbeat.
+
+Project exports include a `tracking` object containing original samples and counted slices in addition to events. Deletion removes time records and client connections along with the project.
 
 ## Claude imports
 
