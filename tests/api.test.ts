@@ -20,6 +20,33 @@ describe('local collector API', () => {
   it('requires authentication for project data and mutations', async () => {
     const response = await app.inject({ url: '/api/projects', headers: { host: headers.host } });
     expect(response.statusCode).toBe(401);
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/workspaces/resolve',
+      headers: { host: headers.host },
+      payload: { key: 'a'.repeat(64), name: 'My folder' },
+    });
+    expect(setup.statusCode).toBe(401);
+  });
+
+  it('links workspaces idempotently and can reuse a dashboard project', async () => {
+    const resolve = (key: string, projectId?: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/workspaces/resolve',
+        headers,
+        payload: { key, name: 'My folder', projectId },
+      });
+    const first = (await resolve('a'.repeat(64))).json();
+    expect((await resolve('a'.repeat(64))).json().id).toBe(first.id);
+    expect((await resolve('b'.repeat(64))).json().id).not.toBe(first.id);
+    expect((await resolve('a'.repeat(64), 'project-one')).json().id).toBe('project-one');
+    expect((await resolve('a'.repeat(64))).json().id).toBe('project-one');
+    expect((await resolve('c'.repeat(64), 'missing')).statusCode).toBe(404);
+    store.createProject('Example', 'example-project', true);
+    expect((await resolve('c'.repeat(64), 'example-project')).statusCode).toBe(400);
+    store.deleteProject('project-one');
+    expect((await resolve('a'.repeat(64))).json().id).not.toBe('project-one');
   });
 
   it('blocks hostile origins and hosts, including token bootstrap requests', async () => {

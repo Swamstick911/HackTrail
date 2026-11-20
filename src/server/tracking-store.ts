@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { Database } from './database.js';
 import {
   heartbeatSchema,
   trackingPolicy,
@@ -29,7 +29,7 @@ export function subtractRanges(range: Range, exclusions: Range[]): Range[] {
 }
 
 export class TrackingStore {
-  constructor(private database: Database.Database) {
+  constructor(private database: Database) {
     database.exec(
       [
         'CREATE TABLE IF NOT EXISTS time_samples (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client_id TEXT NOT NULL, payload TEXT NOT NULL, received_at TEXT NOT NULL);',
@@ -90,12 +90,12 @@ export class TrackingStore {
         }
         const overlaps = this.database
           .prepare('SELECT start, end FROM time_slices WHERE start < ? AND end > ?')
-          .all(range.end, range.start) as Range[];
+          .all(range.end, range.start) as unknown as Range[];
         const pauses = this.database
           .prepare(
             'SELECT start, COALESCE(end, ?) AS end FROM tracking_pauses WHERE start < ? AND (end IS NULL OR end > ?)',
           )
-          .all(Math.max(now, range.end), range.end, range.start) as Range[];
+          .all(Math.max(now, range.end), range.end, range.start) as unknown as Range[];
         const slices = subtractRanges(range, [...overlaps, ...pauses]);
         this.database
           .prepare(
@@ -142,7 +142,7 @@ export class TrackingStore {
       .prepare(
         'SELECT id, project_id AS projectId, label, state, last_seen_at AS lastSeenAt FROM tracking_clients WHERE project_id = ? ORDER BY last_seen_at DESC',
       )
-      .all(projectId) as TrackingClient[];
+      .all(projectId) as unknown as TrackingClient[];
     return {
       policy: trackingPolicy,
       paused: this.paused(),

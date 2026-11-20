@@ -93,9 +93,30 @@ export function createApp(options: AppOptions) {
     return reply.code(500).send({ error: 'The local collector could not complete the request.' });
   });
 
-  app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }));
+  app.get('/api/health', async () => ({
+    status: 'ok',
+    service: 'hacktrail',
+    version: '0.3.0',
+    setupVersion: 1,
+  }));
   app.get('/api/session', async () => ({ token: options.token }));
   app.get('/api/projects', async () => options.store.listProjects());
+  app.post('/api/workspaces/resolve', async (request) => {
+    const input = z
+      .object({
+        key: z.string().regex(/^[a-f0-9]{64}$/),
+        name: z
+          .string()
+          .trim()
+          .min(1)
+          .max(80)
+          .regex(/^[^\u0000-\u001f]+$/),
+        projectId: z.string().min(3).max(128).optional(),
+      })
+      .strict()
+      .parse(request.body);
+    return options.store.resolveWorkspace(input.key, input.name, input.projectId);
+  });
   app.post('/api/projects', async (request, reply) => {
     const input = z
       .object({

@@ -20,7 +20,13 @@ try {
   if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'))
     throw error;
   token = randomBytes(32).toString('hex');
-  writeFileSync(tokenPath, token + '\n', { mode: 0o600, flag: 'wx' });
+  try {
+    writeFileSync(tokenPath, token + '\n', { mode: 0o600, flag: 'wx' });
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST'))
+      throw error;
+    token = readFileSync(tokenPath, 'utf8').trim();
+  }
 }
 if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('The local token file is invalid.');
 if (process.platform !== 'win32') chmodSync(tokenPath, 0o600);
@@ -33,7 +39,7 @@ const app = createApp({
   store,
   token,
   port,
-  webRoot: resolve(directory, '../web'),
+  webRoot: resolve(process.env.HACKTRAIL_WEB_ROOT ?? resolve(directory, '../web')),
   extensionPath: resolve(directory, '../../releases/hacktrail.vsix'),
   development: directory.includes('/src/server') || directory.includes('\\src\\server'),
 });

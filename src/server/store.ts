@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database } from './database.js';
 import { randomUUID } from 'node:crypto';
 import { TrackingStore } from './tracking-store.js';
 import { reviewActivity } from '../shared/review.js';
@@ -43,7 +43,7 @@ export interface TimelineQuery {
 }
 
 export class ActivityStore {
-  private database: Database.Database;
+  private database: Database;
   readonly tracking: TrackingStore;
 
   constructor(filePath: string) {
@@ -61,10 +61,11 @@ export class ActivityStore {
         'occurred_at TEXT NOT NULL, source TEXT NOT NULL, actor TEXT NOT NULL,',
         'kind TEXT NOT NULL, payload TEXT NOT NULL);',
         'CREATE INDEX IF NOT EXISTS events_project_time ON events(project_id, occurred_at DESC, id DESC);',
+        'CREATE TABLE IF NOT EXISTS workspace_links (workspace_key TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE);',
       ].join('\n'),
     );
     this.tracking = new TrackingStore(this.database);
-    this.database.pragma('user_version = 2');
+    this.database.pragma('user_version = 3');
   }
 
   close() {
@@ -78,7 +79,7 @@ export class ActivityStore {
           'FROM projects p LEFT JOIN events e ON e.project_id = p.id ' +
           'GROUP BY p.id ORDER BY p.is_example, p.created_at DESC, p.id',
       )
-      .all() as ProjectRow[];
+      .all() as unknown as ProjectRow[];
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -107,13 +108,33 @@ export class ActivityStore {
     this.database.prepare('DELETE FROM projects WHERE id = ?').run(id);
   }
 
+  resolveWorkspace(key: string, name: string, projectId?: string): Project {
+    return this.database.transaction(() => {
+      const linked = this.database
+        .prepare('SELECT project_id FROM workspace_links WHERE workspace_key = ?')
+        .get(key) as { project_id: string } | undefined;
+      const project = projectId
+        ? this.getProject(projectId)
+        : linked
+          ? this.getProject(linked.project_id)
+          : this.createProject(name);
+      if (project.isExample) throw new StoreError('Choose a real project for tracking.', 400);
+      this.database
+        .prepare(
+          'INSERT INTO workspace_links (workspace_key, project_id) VALUES (?, ?) ON CONFLICT(workspace_key) DO UPDATE SET project_id = excluded.project_id',
+        )
+        .run(key, project.id);
+      return project;
+    })();
+  }
+
   review(id: string, from: string, to: string) {
     this.getProject(id);
     const rows = this.database
       .prepare(
         'SELECT payload FROM events WHERE project_id = ? AND occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at, id',
       )
-      .all(id, from, to) as EventRow[];
+      .all(id, from, to) as unknown as EventRow[];
     return reviewActivity(rows.map((row) => JSON.parse(row.payload) as ActivityEvent));
   }
 
@@ -197,7 +218,7 @@ export class ActivityStore {
           conditions.join(' AND ') +
           ' ORDER BY occurred_at DESC, id DESC LIMIT ?',
       )
-      .all(...values, query.limit + 1) as EventRow[];
+      .all(...values, query.limit + 1) as unknown as EventRow[];
     const events = rows
       .slice(0, query.limit)
       .map((row) => JSON.parse(row.payload) as ActivityEvent);
@@ -230,7 +251,7 @@ export class ActivityStore {
     const project = this.getProject(id);
     const rows = this.database
       .prepare('SELECT payload FROM events WHERE project_id = ? ORDER BY occurred_at, id')
-      .all(id) as EventRow[];
+      .all(id) as unknown as EventRow[];
     return {
       format: 'hacktrail-activity-v1',
       exportedAt: new Date().toISOString(),
