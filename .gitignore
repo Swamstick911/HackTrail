@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.hacktrail/
+*.sqlite*
+playwright-report/
+test-results/
+coverage/
+.env
+.DS_Store
+
