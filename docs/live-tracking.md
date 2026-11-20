@@ -1,6 +1,16 @@
 # Live tracking
 
-Version 0.2 adds VS Code activity estimates and Claude Code hooks to the original local collector.
+Version 0.3 makes local setup automatic through the VS Code extension.
+
+## Setup and lifecycle
+
+The first trusted workspace prompts for local collection consent. Enabling tracking starts the bundled collector, resolves a project from a hash of the canonical folder path, and installs Claude hooks. Editor-only consent skips Claude. A dashboard link can attach the workspace to an existing project. Untrusted workspaces cannot activate the extension.
+
+The collector uses [Node.js SQLite](https://nodejs.org/api/sqlite.html), preserving the existing SQLite tables and files while removing native addon installation. The VSIX includes bundled server code, dashboard assets, and the Claude hook runner. It reuses Node.js 26 or downloads version 26.8.1 from nodejs.org, verifies the platform-specific release digest, extracts the executable and license, and caches them in extension global storage.
+
+Health checks verify the service and setup protocol before reuse. Separate VS Code windows share the loopback collector; a competing process must bind the same port before it can serve requests. The collector closes after ten minutes without requests when managed by the extension. Manual servers retain their existing lifetime. Hook commands use the resolved runtime path, so they do not depend on Node being in the Claude terminal PATH.
+
+Folder linking is transactional and idempotent. Deleting a project also removes its workspace link. Only the folder name and path hash reach the local collector. Absolute folder paths stay in local extension state and hook settings. This hash is an identifier, not a secrecy guarantee for predictable paths.
 
 ## Editor signals
 
@@ -42,6 +52,8 @@ Review summaries are deterministic counts and notes, not an LLM assessment. They
 
 Tests cover idle expiry, focus loss, sleep and clock gaps, offline replay, overlapping projects, pause/resume, conflicting IDs, deleted projects, and privacy boundaries. Adapter tests exercise the VS Code extension against a stub editor API and the real time store.
 
-Browser checks cover import/export, live updates, notes, pause controls, review, desktop/mobile layouts, and VSIX download. The Claude integration check installs hooks into a temporary workspace, executes the actual bundled hook process, tests offline retry, and verifies that unrelated settings survive removal.
+Setup tests cover consent, editor-only mode, project reuse, hook preservation, failed startup retry, and runtime integrity rejection. A process test copies the bundled collector into a temporary directory without repository dependencies and checks the dashboard, project resolution, and recorded editor time.
+
+Browser checks cover import/export, live updates, notes, pause controls, review, desktop/mobile layouts, VS Code setup links, and VSIX download. The Claude integration check installs hooks into a temporary workspace, executes the actual bundled hook process, tests offline retry, and verifies that unrelated settings survive removal.
 
 These checks do not replace a real VS Code host test, a Windows laptop test, or comparison against consented reference work sessions.

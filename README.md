@@ -4,9 +4,25 @@ Local time tracking and a project journal for people building with AI.
 
 HackTrail estimates editor activity from VS Code, collects Claude Code events live, and keeps your notes alongside the work. Editor time and agent time stay separate.
 
-## Run locally
+## Start with VS Code
 
-Install Node.js 26 and Git. These commands also work in Windows PowerShell:
+1. Install `hacktrail.vsix` using **Extensions: Install from VSIX** in VS Code.
+2. Open your project folder. Accept **Enable tracking** in the HackTrail prompt.
+3. Start working. HackTrail opens the dashboard and handles the collector, project, and Claude hooks automatically.
+
+Choose **Editor only** in the prompt if you do not want Claude tracking. Dismissing it leaves tracking off. You can return with **HackTrail: Enable Tracking** from the command palette. Restart an existing Claude session once after setup so it loads the hooks.
+
+No terminal command, account connection, API key, or separately installed Node.js is needed for extension users. Setup reuses Node.js 26 if available; otherwise it downloads a pinned runtime from nodejs.org and checks its SHA-256 digest before running it. Subsequent starts work offline.
+
+The extension starts the collector when needed and restarts it after a disconnect. A collector started by the extension exits after ten minutes without requests. Existing projects and offline samples survive restarts.
+
+The package is generated at `releases/hacktrail.vsix` by the build below. It is not published to the VS Code Marketplace yet. If you already created a project in the dashboard, use **Connections > Enable in VS Code** to link your open folder to it.
+
+The extension requires VS Code 1.100 or newer and a trusted local folder. Automatic runtime setup supports Windows, macOS, and Linux on x64 and ARM64. In a multi-folder workspace, choose the folder to track; activity in other roots is excluded. Remote SSH, WSL, containers, and virtual workspaces still need separate validation.
+
+## Build from source
+
+For development, install Node.js 26 and Git. These commands also work in Windows PowerShell:
 
 ```sh
 git clone https://github.com/Swamstick911/HackTrail.git
@@ -16,21 +32,9 @@ npm run build
 npm start
 ```
 
-Open http://127.0.0.1:47654. Keep the terminal open while using HackTrail. Press Ctrl+C to stop it.
+Open http://127.0.0.1:47654. This manual server runs until you press Ctrl+C. The extension reuses it when it is available. Stop older HackTrail servers before enabling tracking with an updated extension.
 
-The build creates the dashboard, collector, Claude adapter, and an installable VS Code extension. No cloud API key or separate database service is needed. Installation requires internet access; the built application works locally.
-
-## Connect VS Code
-
-1. Create a project in the dashboard.
-2. Select **Connect VS Code** and download the extension.
-3. In VS Code's command palette, run **Extensions: Install from VSIX** and choose the downloaded file.
-4. Open your project folder. Run **HackTrail: Connect This Workspace**, accept the local collector address, and choose your project.
-5. Start editing. The status bar shows tracking, idle, paused, or offline. Dashboard totals update every few seconds.
-
-The package is also available at `releases/hacktrail.vsix` after building. Compatible Cursor versions can install the same package. The extension requires VS Code 1.100 or newer and a trusted workspace.
-
-For SSH, WSL, and containers, run the collector in the same environment as the extension host. It connects only to a loopback address.
+The build creates the dashboard, collector, Claude adapter, and installable VS Code extension. No native database compilation or cloud API key is needed.
 
 ## How time works
 
@@ -45,23 +49,20 @@ This is an estimate of editor activity, not verified human working time. Focus a
 
 Use the dashboard's **How is this counted?** link for the current rules. Exports include raw time samples, counted intervals, and policy version 1.
 
-## Connect Claude Code
+## Claude Code
 
-Open **Connections**, select **Claude Code**, and copy the command for your project. Run it from the HackTrail directory, replacing the workspace placeholder with your project folder:
-
-```sh
-npm run connect:claude -- --project YOUR_PROJECT_ID --workspace "YOUR_PROJECT_FOLDER"
-```
-
-The installer adds local hooks in that project's `.claude/settings.local.json`, preserves other settings and hooks, and saves a backup in `.hacktrail/`. It also ignores the local files in Git. Restart Claude to load the hooks.
+Choosing **Enable tracking** in VS Code installs Claude hooks for that project automatically. The installer keeps existing settings and other hooks, saves a backup when settings change, and ignores local tracking files in Git. Repeating setup does not duplicate hooks or projects.
 
 Hooks record prompts as events without storing their text, tool names and outcomes, and agent start/finish events. They do not store code, prompts, tool arguments, or outputs. The dashboard updates automatically.
 
 Agent time is elapsed time between paired start and finish hooks, so it can include waiting. Interrupted or unmatched runs are excluded from the duration and flagged for review. Agent time is never added to editor time.
 
-If the collector is offline, hook events are queued locally and retry on the next hook, up to 5,000 queued entries. To remove HackTrail's hooks while preserving other hooks:
+If the collector is offline, hook events are queued locally and retry on the next hook, up to 5,000 queued entries. **HackTrail: Disable Claude Tracking** removes only HackTrail's hooks. Restart existing Claude sessions afterward. Editor pause controls affect editor time; use this separate command to stop Claude collection.
+
+For setups without VS Code, the optional CLI remains available:
 
 ```sh
+npm run connect:claude -- --project YOUR_PROJECT_ID --workspace "YOUR_PROJECT_FOLDER"
 npm run connect:claude -- --workspace "YOUR_PROJECT_FOLDER" --remove
 ```
 
@@ -77,7 +78,9 @@ Imports add evidence, not retrospective working hours. **Export project record**
 
 ## Local data
 
-The SQLite database and local access token live in `.hacktrail/` under the directory where you start the collector. This directory is ignored by Git.
+The extension stores its collector database, access token, log, and downloaded runtime in VS Code global storage for `swamstick911.hacktrail`. Workspace settings hold the local connection and offline editor queue. Claude hooks and their queue live in the project's ignored `.hacktrail/` directory.
+
+When started manually with `npm start`, the collector stores its database and access token in `.hacktrail/` under the current directory. Reusing a running manual collector keeps that data location; the extension does not copy or move existing databases.
 
 | Setting              | Default      | Purpose                       |
 | -------------------- | ------------ | ----------------------------- |

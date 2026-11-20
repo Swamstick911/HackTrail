@@ -6,7 +6,7 @@ The default base URL is `http://127.0.0.1:47654/api`. Request and response bodie
 
 Send `Authorization: Bearer <token>` with project, event, and import requests. Read the token from `.hacktrail/collector.token` in the selected data directory. Do not commit it or include it in exports.
 
-`GET /health` returns service status without authentication. `GET /session` lets the local browser bootstrap its token. Both still enforce the Host and Origin checks. Non-browser local clients can also access the bootstrap endpoint; the token does not isolate different users on the same machine.
+`GET /health` returns service status, `service: "hacktrail"`, the version, and `setupVersion: 1` without authentication. `GET /session` lets the local browser bootstrap its token. Both still enforce the Host and Origin checks. Non-browser local clients can also access the bootstrap endpoint; the token does not isolate different users on the same machine.
 
 Only loopback hosts on the configured port are allowed. Production browser requests must use the collector's own origin. Cross-site browser requests are rejected, and no CORS access is enabled.
 
@@ -26,6 +26,12 @@ Only loopback hosts on the configured port are allowed. Production browser reque
 | POST   | `/example`              | Add the labeled synthetic example, skipping duplicates |
 
 Only set `Content-Type: application/json` when sending a JSON body.
+
+## Workspace setup
+
+`POST /workspaces/resolve` accepts `{ "key": "64-character SHA-256 hex digest", "name": "Folder name", "projectId": "optional-existing-project" }` and returns the project. It requires authentication. The extension hashes the canonical folder path locally; it never sends the absolute path.
+
+Without `projectId`, the route returns the linked project or creates one atomically. Providing an existing real project links the folder to it instead. Example projects cannot be used for tracking. Deleting a project cascades its workspace links. Repeated requests reuse the same project.
 
 ## Events
 
