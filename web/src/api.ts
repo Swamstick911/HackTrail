@@ -13,7 +13,7 @@ async function localToken() {
   return tokenPromise;
 }
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request(path: string, options: RequestInit = {}, retry = true): Promise<Response> {
   const token = await localToken();
   const headers = new Headers(options.headers);
   headers.set('Authorization', 'Bearer ' + token);
@@ -22,6 +22,10 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     ...options,
     headers,
   });
+  if (response.status === 401 && retry) {
+    tokenPromise = undefined;
+    return request(path, options, false);
+  }
   if (!response.ok) {
     const body = (await response
       .json()
@@ -30,8 +34,25 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     };
     throw new Error(body.error);
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  return response;
+}
+
+export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await request(path, options);
+  return response.status === 204 ? (undefined as T) : (response.json() as Promise<T>);
+}
+
+export function saveDownload(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function downloadExtension() {
+  saveDownload(await (await request('/integrations/vscode')).blob(), 'hacktrail.vsix');
 }
 
 export function errorMessage(error: unknown) {

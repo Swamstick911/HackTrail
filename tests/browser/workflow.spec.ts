@@ -1,14 +1,108 @@
 import { expect, test } from '@playwright/test';
 import { transcript } from '../fixtures.js';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { connectClaude } from '../../src/cli/connect-claude.js';
 
 test.beforeEach(async ({ request }) => {
   const session = await request.get('/api/session');
   const { token } = await session.json();
   const headers = { Authorization: 'Bearer ' + token };
+  await request.post('/api/tracking/pause', { headers, data: { paused: false } });
   const response = await request.get('/api/projects', { headers });
   for (const project of await response.json()) {
     const deleted = await request.delete('/api/projects/' + project.id, { headers });
     expect(deleted.status()).toBe(204);
+  }
+});
+
+test('Claude setup preserves hooks, delivers live events, retries offline, and disconnects', async ({
+  request,
+}) => {
+  const { token } = await (await request.get('/api/session')).json();
+  const headers = { Authorization: 'Bearer ' + token };
+  const project = await (
+    await request.post('/api/projects', { headers, data: { name: 'Claude integration test' } })
+  ).json();
+  const workspace = mkdtempSync(join(tmpdir(), 'hacktrail-hooks-'));
+  const options = {
+    workspace,
+    projectId: project.id,
+    url: 'http://127.0.0.1:47655',
+    bundlePath: resolve('dist/cli/claude-hook.mjs'),
+  };
+  try {
+    mkdirSync(join(workspace, '.claude'));
+    const settingsPath = join(workspace, '.claude/settings.local.json');
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        env: { KEEP: 'value' },
+        hooks: {
+          PreToolUse: [
+            { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo existing-hook' }] },
+          ],
+        },
+      }),
+    );
+    await connectClaude(options);
+    await connectClaude(options);
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(settings.env.KEEP).toBe('value');
+    expect(settings.hooks.PreToolUse).toHaveLength(2);
+    function run(hook: string) {
+      execFileSync(process.execPath, [join(workspace, '.hacktrail/claude-hook.mjs')], {
+        input: JSON.stringify({
+          hook_event_name: hook,
+          session_id: 'live-test-session',
+          tool_name: 'Bash',
+          tool_use_id: 'live-tool',
+          prompt: 'PRIVATE_PROMPT',
+          tool_input: { command: 'PRIVATE_COMMAND' },
+          tool_response: 'PRIVATE_OUTPUT',
+        }),
+        timeout: 5000,
+      });
+    }
+    run('UserPromptSubmit');
+    run('PreToolUse');
+    run('PostToolUseFailure');
+    run('Stop');
+    const exported = await (
+      await request.get('/api/projects/' + project.id + '/export', { headers })
+    ).json();
+    expect(exported.events).toHaveLength(5);
+    expect(JSON.stringify(exported)).not.toContain('PRIVATE_');
+    expect(
+      exported.events.find((event: { kind: string }) => event.kind === 'tool_result').metadata
+        .success,
+    ).toBe(false);
+    const connectionPath = join(workspace, '.hacktrail/connection.json');
+    writeFileSync(
+      connectionPath,
+      JSON.stringify({ projectId: project.id, url: 'http://127.0.0.1:1' }),
+    );
+    run('UserPromptSubmit');
+    expect(readdirSync(join(workspace, '.hacktrail/hook-queue'))).toHaveLength(1);
+    writeFileSync(connectionPath, JSON.stringify({ projectId: project.id, url: options.url }));
+    run('Stop');
+    expect(readdirSync(join(workspace, '.hacktrail/hook-queue'))).toHaveLength(0);
+    const latest = await (
+      await request.get('/api/projects/' + project.id + '/export', { headers })
+    ).json();
+    expect(latest.events).toHaveLength(8);
+    await connectClaude({ ...options, remove: true });
+    const removed = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(removed.env.KEEP).toBe('value');
+    expect(removed.hooks.PreToolUse).toHaveLength(1);
+    expect(removed.hooks.PreToolUse[0].hooks[0].command).toBe('echo existing-hook');
+    const download = await request.get('/api/integrations/vscode', { headers });
+    expect(download.ok()).toBe(true);
+    expect((await download.body()).subarray(0, 2).toString()).toBe('PK');
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
   }
 });
 
@@ -51,6 +145,8 @@ test('create, preview, import, inspect, export, replay, and delete', async ({ pa
   await expect(
     page.getByRole('heading', { name: 'Browser test project', exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Connect your tools' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
 
   async function importFile() {
     await page.getByRole('button', { name: 'Import activity', exact: true }).click();
@@ -92,6 +188,7 @@ test('create, preview, import, inspect, export, replay, and delete', async ({ pa
   expect(JSON.stringify(exported)).not.toContain('Private project question');
 
   await page.reload();
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
   await expect(
     page.getByRole('heading', { name: 'Browser test project', exact: true }),
   ).toBeVisible();
@@ -106,4 +203,60 @@ test('create, preview, import, inspect, export, replay, and delete', async ({ pa
   await expect(page.getByRole('navigation', { name: 'Projects' })).not.toContainText(
     'Browser test project',
   );
+});
+
+test('live editor time, pause controls, notes, and review update without reload', async ({
+  page,
+  request,
+}, testInfo) => {
+  const { token } = await (await request.get('/api/session')).json();
+  const headers = { Authorization: 'Bearer ' + token };
+  const project = await (
+    await request.post('/api/projects', { headers, data: { name: 'Building a better search' } })
+  ).json();
+  await page.goto('/');
+  await expect(page.getByTestId('today-time')).toHaveText('0s');
+  const end = Date.now() - 1000;
+  const samples = Array.from({ length: 3 }, (_, index) => ({
+    id: 'browser-time-' + index,
+    projectId: project.id,
+    startedAt: new Date(end - (3 - index) * 15_000).toISOString(),
+    endedAt: new Date(end - (2 - index) * 15_000).toISOString(),
+    signal: 'keyboard',
+  }));
+  const heartbeat = {
+    clientId: 'browser-editor',
+    projectId: project.id,
+    label: 'VS Code',
+    state: 'active',
+    samples,
+  };
+  expect((await request.post('/api/tracking/heartbeat', { headers, data: heartbeat })).ok()).toBe(
+    true,
+  );
+  await expect(page.getByTestId('today-time')).toHaveText('45s', { timeout: 10_000 });
+  await expect(page.getByText('Tracking editor activity')).toBeVisible();
+  await page.getByRole('button', { name: 'Pause tracking', exact: true }).click();
+  await expect(page.getByText('Tracking paused', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume tracking', exact: true }).click();
+  await expect(page.getByText('Tracking editor activity')).toBeVisible();
+  await page
+    .getByLabel('Work note', { exact: true })
+    .fill('Fixed keyboard navigation and checked the empty state.');
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  await expect(page.locator('.saved-notes')).toContainText('Fixed keyboard navigation');
+  await page.screenshot({ path: testInfo.outputPath('today-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: testInfo.outputPath('today-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await expect(page.locator('.review-panel')).toContainText('45s');
+  await expect(page.locator('.review-panel')).toContainText('Fixed keyboard navigation');
+  await page.getByRole('button', { name: 'Read the counting rules' }).click();
+  await expect(page.getByRole('dialog')).toContainText('2 minutes');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.reload();
+  await expect(page.getByTestId('today-time')).toHaveText('45s');
 });

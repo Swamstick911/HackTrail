@@ -1,33 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  ActivityEvent,
-  Actor,
-  Project,
-  ProjectSummary,
-  TimelinePage,
-} from '../../src/shared/events.js';
-import { api, errorMessage } from './api.js';
+import type { ActivityEvent, Actor, Project, TimelinePage } from '../../src/shared/events.js';
+import { api, errorMessage, saveDownload } from './api.js';
 import { Icon } from './icons.js';
 import { DeleteDialog, ImportDialog, NewProjectDialog } from './dialogs.js';
+import { ConnectionsDialog, TimePolicyDialog } from './connections.js';
 import { EvidencePanel, Timeline } from './timeline.js';
+import { ReviewView, TodayView, weekDays, type WorkData } from './work.js';
 
 const emptyPage: TimelinePage = { events: [], total: 0, nextCursor: null };
+type View = 'today' | 'activity' | 'review';
+const views = [
+  { id: 'today', label: 'Today', icon: 'clock' },
+  { id: 'activity', label: 'Activity', icon: 'activity' },
+  { id: 'review', label: 'Review', icon: 'review' },
+] as const;
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState('');
+  const [view, setView] = useState<View>('today');
   const [page, setPage] = useState<TimelinePage>(emptyPage);
-  const [summary, setSummary] = useState<ProjectSummary | null>(null);
+  const [work, setWork] = useState<WorkData | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<ActivityEvent | null>(null);
   const [actor, setActor] = useState<Actor | ''>('');
   const [search, setSearch] = useState('');
   const [refresh, setRefresh] = useState(0);
-  const [dialog, setDialog] = useState<'create' | 'import' | 'delete' | null>(null);
+  const [dialog, setDialog] = useState<
+    'create' | 'import' | 'delete' | 'connect' | 'policy' | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [history, setHistory] = useState(false);
+  const historyRef = useRef(false);
   const requestNumber = useRef(0);
   const project = projects.find((item) => item.id === projectId);
 
@@ -51,42 +58,59 @@ export function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const currentRequest = ++requestNumber.current;
+    const current = ++requestNumber.current;
     setSelectedEvent(null);
+    historyRef.current = false;
+    setHistory(false);
     if (!projectId) {
       setPage(emptyPage);
-      setSummary(null);
+      setWork(null);
       return () => controller.abort();
     }
     setLoading(true);
-    setError('');
-    const query = new URLSearchParams({ limit: '60' });
-    if (actor) query.set('actor', actor);
-    if (search) query.set('search', search);
-    const timer = setTimeout(
-      () => {
-        void Promise.all([
-          api<TimelinePage>('/projects/' + projectId + '/events?' + query, {
-            signal: controller.signal,
-          }),
-          api<ProjectSummary>('/projects/' + projectId + '/summary', { signal: controller.signal }),
-        ])
-          .then(([nextPage, nextSummary]) => {
-            if (requestNumber.current !== currentRequest) return;
-            setPage(nextPage);
-            setSummary(nextSummary);
-          })
-          .catch((error) => {
-            if (!controller.signal.aborted) setError(errorMessage(error));
-          })
-          .finally(() => {
-            if (!controller.signal.aborted) setLoading(false);
-          });
-      },
-      search ? 200 : 0,
-    );
+    let pending = false;
+    async function update() {
+      if (pending || controller.signal.aborted) return;
+      pending = true;
+      const days = weekDays();
+      const range = new URLSearchParams({
+        from: new Date(days[0]!.start).toISOString(),
+        to: new Date(days[6]!.end).toISOString(),
+      });
+      const query = new URLSearchParams({ limit: '60' });
+      if (actor) query.set('actor', actor);
+      if (search) query.set('search', search);
+      try {
+        const [nextWork, nextPage] = await Promise.all([
+          api<WorkData>('/projects/' + projectId + '/work?' + range, { signal: controller.signal }),
+          historyRef.current
+            ? Promise.resolve(null)
+            : api<TimelinePage>('/projects/' + projectId + '/events?' + query, {
+                signal: controller.signal,
+              }),
+        ]);
+        if (requestNumber.current !== current) return;
+        setWork(nextWork);
+        if (nextPage && !historyRef.current) setPage(nextPage);
+        setConnected(true);
+        setError('');
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setConnected(false);
+          setError(errorMessage(error));
+        }
+      } finally {
+        pending = false;
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+    const initial = setTimeout(() => void update(), search ? 200 : 0);
+    const poll = setInterval(() => {
+      if (document.visibilityState === 'visible') void update();
+    }, 3000);
     return () => {
-      clearTimeout(timer);
+      clearTimeout(initial);
+      clearInterval(poll);
       controller.abort();
     };
   }, [projectId, actor, search, refresh]);
@@ -97,15 +121,16 @@ export function App() {
     setSearch('');
     setNotice('');
     setPage(emptyPage);
-    setSummary(null);
+    setWork(null);
+    setSelectedEvent(null);
   }
 
   async function showExample() {
     setBusy(true);
-    setError('');
     try {
       const result = await api<{ project: Project }>('/example', { method: 'POST', body: '{}' });
       await loadProjects(result.project.id);
+      setView('activity');
       setRefresh((value) => value + 1);
     } catch (error) {
       setError(errorMessage(error));
@@ -116,14 +141,16 @@ export function App() {
 
   async function loadMore() {
     if (!page.nextCursor || busy) return;
-    const currentRequest = requestNumber.current;
+    const current = requestNumber.current;
     const query = new URLSearchParams({ limit: '60', cursor: page.nextCursor });
     if (actor) query.set('actor', actor);
     if (search) query.set('search', search);
     setBusy(true);
+    historyRef.current = true;
+    setHistory(true);
     try {
       const next = await api<TimelinePage>('/projects/' + projectId + '/events?' + query);
-      if (requestNumber.current === currentRequest)
+      if (requestNumber.current === current)
         setPage((previous) => ({ ...next, events: [...previous.events, ...next.events] }));
     } catch (error) {
       setError(errorMessage(error));
@@ -136,13 +163,10 @@ export function App() {
     setBusy(true);
     try {
       const exported = await api<unknown>('/projects/' + projectId + '/export');
-      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'hacktrail-' + projectId + '.json';
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveDownload(
+        new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
+        'hacktrail-' + projectId + '.json',
+      );
     } catch (error) {
       setError(errorMessage(error));
     } finally {
@@ -150,149 +174,178 @@ export function App() {
     }
   }
 
-  async function onCreated(created: Project) {
-    setDialog(null);
-    selectProject(created.id);
+  async function pauseTracking() {
+    setBusy(true);
     try {
-      await loadProjects(created.id);
+      await api('/tracking/pause', {
+        method: 'POST',
+        body: JSON.stringify({ paused: !work?.tracking.paused }),
+      });
+      setRefresh((value) => value + 1);
     } catch (error) {
       setError(errorMessage(error));
-    }
-  }
-
-  async function onImported(result: { inserted: number; duplicates: number }) {
-    setDialog(null);
-    setNotice(result.inserted + ' events imported. ' + result.duplicates + ' duplicates skipped.');
-    setRefresh((value) => value + 1);
-    try {
-      await loadProjects(projectId);
-    } catch (error) {
-      setError(errorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <aside className="sidebar">
         <a className="brand" href="/" aria-label="HackTrail home">
           <span className="brand-symbol">
-            <Icon name="trail" width="24" height="24" />
+            h<span>.</span>
           </span>
-          HackTrail<span className="version">0.1</span>
+          <span>hacktrail</span>
         </a>
-        <button
-          className="icon-button mobile-add"
-          aria-label="New project"
-          onClick={() => setDialog('create')}
-        >
-          <Icon name="plus" />
-        </button>
-        <div className="workspace-label">
-          <span className="status-dot" /> YOUR LOCAL WORKSPACE
+        <div className="workspace-name">
+          <span className="workspace-avatar">W</span>
+          <div>
+            Your workspace<small>Local to this device</small>
+          </div>
         </div>
+        <nav className="view-nav" aria-label="Workspace views">
+          {views.map((item) => (
+            <button
+              key={item.id}
+              className={view === item.id ? 'selected' : ''}
+              aria-current={view === item.id ? 'page' : undefined}
+              onClick={() => {
+                setView(item.id);
+                setSelectedEvent(null);
+              }}
+            >
+              <Icon name={item.icon} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
         <div className="sidebar-section">
-          <span className="eyebrow">PROJECTS</span>
+          <h2>Projects</h2>
           <button
             className="icon-button"
             aria-label="New project"
             onClick={() => setDialog('create')}
           >
-            <Icon name="plus" width="17" height="17" />
+            <Icon name="plus" width="18" height="18" />
           </button>
         </div>
         <nav className="project-list" aria-label="Projects">
           {projects.map((item) => (
             <button
-              className={'project-link ' + (item.id === projectId ? 'active' : '')}
               key={item.id}
+              className={'project-link ' + (item.id === projectId ? 'selected' : '')}
+              aria-current={item.id === projectId ? 'true' : undefined}
               onClick={() => selectProject(item.id)}
             >
               <span className="project-avatar">{item.name.charAt(0).toUpperCase()}</span>
-              <span className="project-name">
+              <span>
                 {item.name}
-                <small>{item.isExample ? 'Example project' : item.eventCount + ' events'}</small>
-              </span>
-              <span className="project-arrow">
-                <Icon name="arrow" width="14" height="14" />
+                {item.isExample && <small>Example</small>}
               </span>
             </button>
           ))}
-          {!projects.length && (
-            <p className="sidebar-empty">Your first trail starts with a project.</p>
-          )}
+          {!projects.length && <p className="sidebar-empty">No projects yet.</p>}
         </nav>
-        <button className="sidebar-add" onClick={() => setDialog('create')}>
-          <Icon name="plus" width="16" height="16" /> New project
-        </button>
+        <label className="mobile-project">
+          <span className="sr-only">Current project</span>
+          <select value={projectId} onChange={(event) => selectProject(event.target.value)}>
+            {!projects.length && <option value="">Choose a project</option>}
+            {projects.map((item) => (
+              <option value={item.id} key={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="sidebar-bottom">
-          <div className="privacy-note">
-            <Icon name="shield" />
-            <div>
-              <strong>Stays on this device</strong>
-              <p>
-                Your records are local.
-                <br />
-                Sharing is always your choice.
-              </p>
-            </div>
-          </div>
           <button
-            className="text-button example-link"
-            onClick={() => {
-              void showExample();
-            }}
-            disabled={busy || !connected}
+            className="sidebar-connection"
+            disabled={!project}
+            onClick={() => setDialog('connect')}
           >
-            Explore example project <Icon name="arrow" width="15" height="15" />
+            <Icon name="connect" />
+            Connections
           </button>
-          <span className="sidebar-caption">Built for the work behind the work.</span>
+          <div className="collector-status">
+            <span className={'status-dot ' + (connected ? 'online' : '')} />
+            {connected ? 'Collector online' : 'Collector offline'}
+            <span>v0.2</span>
+          </div>
         </div>
       </aside>
       <div className="main-shell">
         <header className="topbar">
-          <div className="breadcrumb">
-            <Icon name="folder" width="17" height="17" />
-            <span>Workspace</span>
-            <span className="slash">/</span>
-            <strong>{project?.name ?? 'Getting started'}</strong>
-          </div>
-          <span className="connection">
-            <span className={'status-dot ' + (!connected ? 'offline' : '')} />
-            {connected ? 'Local collector connected' : 'Connecting to collector'}
+          <span className="breadcrumb">
+            Workspace <span>/</span> <strong>{project?.name ?? 'Getting started'}</strong>
+          </span>
+          <span className="topbar-date">
+            {new Date().toLocaleDateString(undefined, {
+              weekday: 'long',
+              month: 'short',
+              day: 'numeric',
+            })}
           </span>
         </header>
-        <main>
+        <main id="main-content">
           <div className="page-heading">
             <div>
-              <p className="eyebrow">YOUR WORK, WITH CONTEXT</p>
-              <h1>{project?.name ?? 'Make room for your next idea.'}</h1>
-              <p className="subtitle">
-                {project
-                  ? 'Follow the decisions, attempts, and activity behind your project.'
-                  : 'A clear record of how your projects take shape, kept on your device.'}
+              <p className="page-context">
+                {view === 'today'
+                  ? 'Make something worth your time.'
+                  : view === 'activity'
+                    ? 'The details behind the work.'
+                    : 'Put your work in perspective.'}
               </p>
+              <h1>{project?.name ?? 'What are you working on?'}</h1>
             </div>
             {project && (
               <div className="header-actions">
-                <button
-                  onClick={() => {
-                    void exportProject();
-                  }}
-                  disabled={busy || !summary?.total}
-                >
-                  <Icon name="download" width="17" height="17" /> Export JSON
-                </button>
-                <button className="primary" onClick={() => setDialog('import')}>
-                  <Icon name="upload" width="17" height="17" /> Import activity
-                </button>
+                {view === 'activity' ? (
+                  <>
+                    <button onClick={() => void exportProject()} disabled={busy}>
+                      <Icon name="download" />
+                      Export JSON
+                    </button>
+                    <button onClick={() => setDialog('import')}>
+                      <Icon name="upload" />
+                      Import activity
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => setDialog('import')}>
+                      <Icon name="upload" />
+                      Import activity
+                    </button>
+                    {work?.tracking.clients.some((client) => client.state !== 'disconnected') ||
+                    work?.tracking.paused ? (
+                      <button
+                        className="primary"
+                        disabled={busy}
+                        onClick={() => void pauseTracking()}
+                      >
+                        <Icon name={work?.tracking.paused ? 'play' : 'pause'} />
+                        {work?.tracking.paused ? 'Resume tracking' : 'Pause tracking'}
+                      </button>
+                    ) : (
+                      <button className="primary" onClick={() => setDialog('connect')}>
+                        <Icon name="connect" />
+                        Connect VS Code
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>
           {error && (
-            <div className="error banner" role="alert">
+            <div className="banner error" role="alert">
               {error}
               <button
-                className="text-button"
                 onClick={() => {
                   setRefresh((value) => value + 1);
                   void loadProjects().catch((error) => setError(errorMessage(error)));
@@ -303,197 +356,206 @@ export function App() {
             </div>
           )}
           {notice && (
-            <div className="success banner" role="status">
+            <div className="banner success" role="status">
               {notice}
               <button
                 className="icon-button"
                 aria-label="Dismiss notice"
                 onClick={() => setNotice('')}
               >
-                <Icon name="close" width="16" height="16" />
+                <Icon name="close" />
               </button>
             </div>
           )}
           {project?.isExample && (
             <div className="example-banner">
-              <span className="eyebrow">EXAMPLE PROJECT</span> This is synthetic activity. It is
-              here to help you explore HackTrail.
+              <strong>Example project</strong>
+              <span>
+                This is synthetic activity, so you can explore without connecting your tools.
+              </span>
             </div>
           )}
           {!project && !loading && (
-            <div className="welcome-card">
-              <div className="welcome-art" aria-hidden="true">
-                <span className="art-line" />
-                <span className="art-node one">
-                  <Icon name="arrow" />
-                </span>
-                <span className="art-node two">
-                  <Icon name="code" />
-                </span>
-                <span className="art-node three">
-                  <Icon name="trail" />
-                </span>
-                <span className="art-card">
-                  An idea.
-                  <br />
-                  <strong>A first attempt.</strong>
-                  <br />A new direction.
-                </span>
+            <section className="onboarding">
+              <div className="onboarding-symbol">
+                <Icon name="folder" width="36" height="36" />
               </div>
-              <p className="eyebrow">EVERY PROJECT STARTS SOMEWHERE</p>
-              <h2>Your first trail is waiting.</h2>
+              <h2>Start with one project.</h2>
               <p>
-                Create a project and import a Claude Code session.
-                <br />
-                See the moments that moved your work forward.
+                Connect your editor, see where your time goes, and keep the story of what you made.
               </p>
-              <div className="welcome-actions">
-                <button className="primary" onClick={() => setDialog('create')}>
-                  <Icon name="plus" width="17" height="17" /> Create your first project
-                </button>
-                <button
-                  onClick={() => {
-                    void showExample();
-                  }}
-                  disabled={busy || !connected}
-                >
-                  Explore an example <Icon name="arrow" width="17" height="17" />
-                </button>
+              <button className="primary" onClick={() => setDialog('create')}>
+                <Icon name="plus" />
+                Create your first project
+              </button>
+              <button
+                className="text-button"
+                disabled={busy || !connected}
+                onClick={() => void showExample()}
+              >
+                Explore an example
+              </button>
+              <div className="onboarding-details">
+                <div>
+                  <Icon name="clock" />
+                  <strong>Time, without the timer</strong>
+                  <p>Your editor records activity and stops counting when you leave.</p>
+                </div>
+                <div>
+                  <Icon name="review" />
+                  <strong>Keep the context</strong>
+                  <p>Agent activity and your notes help explain what happened.</p>
+                </div>
+                <div>
+                  <Icon name="shield" />
+                  <strong>A local workspace</strong>
+                  <p>Your records stay here until you choose to export them.</p>
+                </div>
               </div>
-              <p className="small muted">No account. No automatic upload. No timer to start.</p>
-            </div>
+            </section>
           )}
           {project && (
             <>
-              <section className="stats-grid" aria-label="Activity summary">
-                <Stat
-                  label="Recorded events"
-                  value={summary?.total}
-                  caption="The complete project trail"
-                />
-                <Stat
-                  label="User messages"
-                  value={summary?.userMessages}
-                  caption="Messages in the source record"
-                />
-                <Stat
-                  label="Agent activity"
-                  value={summary?.agentEvents}
-                  caption="Responses and tool calls"
-                />
-                <Stat
-                  label="Tool results"
-                  value={summary?.toolEvents}
-                  caption="Outcomes worth looking into"
-                />
-              </section>
-              <div className="activity-note">
-                <span className="note-marker">i</span>
+              <div className="view-heading">
+                <h2>{views.find((item) => item.id === view)?.label}</h2>
                 <span>
-                  Activity is context, not a stopwatch. This version records events without awarding
-                  working hours.
+                  {view === 'today'
+                    ? 'Updates automatically'
+                    : view === 'activity'
+                      ? 'All recorded activity'
+                      : 'Last 7 days'}
                 </span>
-                <span className="phase-label">PHASE 1</span>
               </div>
-              <div className={'timeline-layout ' + (selectedEvent ? 'with-evidence' : '')}>
-                <section className="timeline-card" aria-label="Project timeline">
-                  <div className="timeline-heading">
-                    <div>
+              {view === 'today' && work && (
+                <TodayView
+                  key={project.id}
+                  data={work}
+                  projectId={project.id}
+                  onConnect={() => setDialog('connect')}
+                  onPolicy={() => setDialog('policy')}
+                  onUpdated={() => setRefresh((value) => value + 1)}
+                />
+              )}
+              {view === 'review' && work && (
+                <ReviewView
+                  data={work}
+                  busy={busy}
+                  onExport={() => void exportProject()}
+                  onPolicy={() => setDialog('policy')}
+                />
+              )}
+              {view !== 'activity' && !work && (
+                <div className="loading-state" role="status">
+                  Loading your workspace...
+                </div>
+              )}
+              {view === 'activity' && (
+                <div className={'timeline-layout ' + (selectedEvent ? 'with-evidence' : '')}>
+                  <section className="panel timeline-card" aria-label="Project timeline">
+                    <div className="panel-heading">
                       <h2>Project timeline</h2>
-                      <p>The details behind your progress.</p>
+                      <span className="pill">{page.total} events</span>
                     </div>
-                    <span className="count-label">{page.total} events</span>
-                  </div>
-                  <div className="timeline-filters">
-                    <label className="search-field">
-                      <Icon name="search" width="17" height="17" />
-                      <input
-                        aria-label="Search activity"
-                        maxLength={100}
-                        placeholder="Search activity..."
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                      />
-                    </label>
-                    <select
-                      aria-label="Filter by actor"
-                      value={actor}
-                      onChange={(event) => setActor(event.target.value as Actor | '')}
-                    >
-                      <option value="">All activity</option>
-                      <option value="user">User messages</option>
-                      <option value="agent">Agent activity</option>
-                      <option value="tool">Tool results</option>
-                      <option value="unknown">Unknown actor</option>
-                    </select>
-                  </div>
-                  {loading ? (
-                    <div className="timeline-empty" role="status">
-                      Loading your trail...
-                    </div>
-                  ) : page.events.length ? (
-                    <Timeline
-                      events={page.events}
-                      selectedId={selectedEvent?.id}
-                      onSelect={setSelectedEvent}
-                    />
-                  ) : (
-                    <div className="timeline-empty">
-                      <Icon name="trail" width="32" height="32" />
-                      <h3>
-                        {search || actor
-                          ? 'No matching activity'
-                          : 'This trail is just getting started.'}
-                      </h3>
-                      <p>
-                        {search || actor
-                          ? 'Try another search or filter.'
-                          : 'Import a session to see the first events here.'}
-                      </p>
-                      {!search && !actor && (
-                        <button onClick={() => setDialog('import')}>
-                          Import a Claude session <Icon name="arrow" width="15" height="15" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {page.nextCursor && !loading && (
-                    <div className="load-more">
-                      <button
-                        disabled={busy}
-                        onClick={() => {
-                          void loadMore();
-                        }}
+                    <div className="timeline-filters">
+                      <label className="search-field">
+                        <Icon name="search" />
+                        <input
+                          aria-label="Search activity"
+                          maxLength={100}
+                          placeholder="Search activity"
+                          value={search}
+                          onChange={(event) => setSearch(event.target.value)}
+                        />
+                      </label>
+                      <select
+                        aria-label="Filter by actor"
+                        value={actor}
+                        onChange={(event) => setActor(event.target.value as Actor | '')}
                       >
-                        {busy ? 'Loading...' : 'Load earlier events'}
-                      </button>
+                        <option value="">All activity</option>
+                        <option value="user">User activity</option>
+                        <option value="agent">Agent activity</option>
+                        <option value="tool">Tool results</option>
+                        <option value="unknown">Unknown actor</option>
+                      </select>
                     </div>
+                    {history && (
+                      <div className="history-notice">
+                        Browsing earlier activity.
+                        <button
+                          className="text-button"
+                          onClick={() => setRefresh((value) => value + 1)}
+                        >
+                          Back to latest
+                        </button>
+                      </div>
+                    )}
+                    {loading ? (
+                      <div className="loading-state" role="status">
+                        Loading activity...
+                      </div>
+                    ) : page.events.length ? (
+                      <Timeline
+                        events={page.events}
+                        selectedId={selectedEvent?.id}
+                        onSelect={setSelectedEvent}
+                      />
+                    ) : (
+                      <div className="empty-work">
+                        <span className="empty-icon">
+                          <Icon name="activity" width="28" height="28" />
+                        </span>
+                        <h3>
+                          {actor || search ? 'No matching activity.' : 'The story starts here.'}
+                        </h3>
+                        <p>
+                          {actor || search
+                            ? 'Try another search or filter.'
+                            : 'Connect Claude Code for live events, or import an existing session.'}
+                        </p>
+                        {!actor && !search && (
+                          <button onClick={() => setDialog('connect')}>Connect your tools</button>
+                        )}
+                      </div>
+                    )}
+                    {page.nextCursor && !loading && (
+                      <div className="load-more">
+                        <button disabled={busy} onClick={() => void loadMore()}>
+                          {busy ? 'Loading...' : 'Load earlier events'}
+                        </button>
+                      </div>
+                    )}
+                    <div className="timeline-footer">
+                      <span>Newest first</span>
+                      <span>Select an event for its details</span>
+                    </div>
+                  </section>
+                  {selectedEvent && (
+                    <EvidencePanel event={selectedEvent} onClose={() => setSelectedEvent(null)} />
                   )}
-                  <div className="timeline-footer">
-                    <span>Newest first</span>
-                    <span>Click an event to inspect its evidence</span>
-                  </div>
-                </section>
-                {selectedEvent && (
-                  <EvidencePanel event={selectedEvent} onClose={() => setSelectedEvent(null)} />
-                )}
-              </div>
+                </div>
+              )}
               <footer className="project-footer">
-                <span>Only the activity you choose to import appears here.</span>
-                <button className="text-button" onClick={() => setDialog('delete')}>
+                <button className="text-button" onClick={() => setDialog('policy')}>
+                  How HackTrail counts time
+                </button>
+                <button className="text-button quiet" onClick={() => setDialog('delete')}>
                   Delete project
                 </button>
               </footer>
             </>
           )}
-          {!project && loading && <p role="status">Connecting to your local workspace...</p>}
+          {!project && loading && <p role="status">Connecting to your workspace...</p>}
         </main>
       </div>
       {dialog === 'create' && (
         <NewProjectDialog
           onClose={() => setDialog(null)}
           onCreated={(created) => {
-            void onCreated(created);
+            setDialog('connect');
+            selectProject(created.id);
+            setView('today');
+            void loadProjects(created.id).catch((error) => setError(errorMessage(error)));
           }}
         />
       )}
@@ -502,10 +564,20 @@ export function App() {
           project={project}
           onClose={() => setDialog(null)}
           onImported={(result) => {
-            void onImported(result);
+            setDialog(null);
+            setView('activity');
+            setNotice(
+              result.inserted + ' events imported. ' + result.duplicates + ' duplicates skipped.',
+            );
+            setRefresh((value) => value + 1);
+            void loadProjects(projectId).catch((error) => setError(errorMessage(error)));
           }}
         />
       )}
+      {dialog === 'connect' && project && (
+        <ConnectionsDialog project={project} onClose={() => setDialog(null)} />
+      )}
+      {dialog === 'policy' && <TimePolicyDialog onClose={() => setDialog(null)} />}
       {dialog === 'delete' && project && (
         <DeleteDialog
           project={project}
@@ -513,21 +585,11 @@ export function App() {
           onDeleted={() => {
             setDialog(null);
             setNotice('Project deleted.');
-            setProjectId('');
+            selectProject('');
             void loadProjects().catch((error) => setError(errorMessage(error)));
           }}
         />
       )}
-    </div>
-  );
-}
-
-function Stat({ label, value, caption }: { label: string; value?: number; caption: string }) {
-  return (
-    <div className="stat-card">
-      <span>{label}</span>
-      <strong>{value === undefined ? '...' : value.toLocaleString()}</strong>
-      <small>{caption}</small>
     </div>
   );
 }

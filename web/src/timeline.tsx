@@ -13,12 +13,14 @@ export function dateLabel(value: string) {
 function eventDescription(event: ActivityEvent) {
   if (event.metadata.excerpt) return event.metadata.excerpt;
   if (event.metadata.toolName) return event.metadata.toolName;
+  if (event.kind === 'agent_started') return 'Claude began working on a request.';
+  if (event.kind === 'agent_stopped') return 'The agent run ended.';
   if (event.kind === 'tool_result') {
     if (event.metadata.success === false) return 'The tool reported an error.';
     if (event.metadata.success === true) return 'The tool reported success.';
     return 'A tool result was recorded.';
   }
-  return 'Message content was not imported.';
+  return 'Message content was not saved.';
 }
 
 export function Timeline({
@@ -58,7 +60,7 @@ export function Timeline({
               <span className={'event-node ' + event.actor}>
                 <Icon
                   name={
-                    event.actor === 'tool' ? 'code' : event.actor === 'user' ? 'arrow' : 'trail'
+                    event.actor === 'tool' ? 'code' : event.actor === 'user' ? 'note' : 'activity'
                   }
                   width="15"
                   height="15"
@@ -75,7 +77,7 @@ export function Timeline({
                   {event.evidence ? ' / ' + event.evidence.fileName : ''}
                 </span>
               </span>
-              <Icon name="arrow" className="row-arrow" width="16" height="16" />
+              <Icon name="chevron" className="row-arrow" width="16" height="16" />
             </button>
           </div>
         );
@@ -88,7 +90,7 @@ export function EvidencePanel({ event, onClose }: { event: ActivityEvent; onClos
   return (
     <aside className="evidence-panel" aria-label="Event details">
       <div className="evidence-heading">
-        <span className="eyebrow">RECORDED EVIDENCE</span>
+        <span className="eyebrow">Event details</span>
         <button className="icon-button" onClick={onClose} aria-label="Close event details">
           <Icon name="close" />
         </button>
@@ -128,7 +130,7 @@ export function EvidencePanel({ event, onClose }: { event: ActivityEvent; onClos
       </dl>
       {event.metadata.excerpt && (
         <div className="excerpt">
-          <span className="eyebrow">SAVED EXCERPT</span>
+          <span className="eyebrow">Saved text</span>
           <p>{event.metadata.excerpt}</p>
         </div>
       )}

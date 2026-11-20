@@ -3,7 +3,7 @@ import type { ActivityEvent, Project } from '../../src/shared/events.js';
 import { api, errorMessage } from './api.js';
 import { Icon } from './icons.js';
 
-function Dialog({
+export function Dialog({
   title,
   onClose,
   busy = false,
@@ -65,10 +65,8 @@ export function NewProjectDialog({
     }
   }
   return (
-    <Dialog title="Start a project trail" onClose={onClose} busy={busy}>
-      <p className="muted">
-        Give your work a home. You can import activity after creating the project.
-      </p>
+    <Dialog title="New project" onClose={onClose} busy={busy}>
+      <p className="muted">Name your project, then connect its VS Code workspace.</p>
       <form onSubmit={submit}>
         <label className="field">
           Project name
