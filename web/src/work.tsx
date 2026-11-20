@@ -241,7 +241,7 @@ export function TodayView({
                 <span>
                   {data.review.lastHookAt
                     ? 'Last event ' + clockLabel(data.review.lastHookAt)
-                    : 'Not connected'}
+                    : 'No events yet'}
                 </span>
               </div>
             </div>

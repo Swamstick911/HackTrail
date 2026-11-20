@@ -35,6 +35,7 @@ const databasePath = resolve(dataDirectory, 'activity.sqlite');
 const store = new ActivityStore(databasePath);
 if (process.platform !== 'win32') chmodSync(databasePath, 0o600);
 const directory = dirname(fileURLToPath(import.meta.url));
+let lastActivity = Date.now();
 const app = createApp({
   store,
   token,
@@ -42,11 +43,25 @@ const app = createApp({
   webRoot: resolve(process.env.HACKTRAIL_WEB_ROOT ?? resolve(directory, '../web')),
   extensionPath: resolve(directory, '../../releases/hacktrail.vsix'),
   development: directory.includes('/src/server') || directory.includes('\\src\\server'),
+  onActivity: () => {
+    lastActivity = Date.now();
+  },
 });
+const idleTimeout = Number(process.env.HACKTRAIL_IDLE_TIMEOUT_MS ?? 0);
+const idleTimer =
+  idleTimeout > 0
+    ? setInterval(
+        () => {
+          if (Date.now() - lastActivity >= idleTimeout) void shutdown();
+        },
+        Math.min(idleTimeout, 60_000),
+      ).unref()
+    : undefined;
 let closing = false;
 async function shutdown() {
   if (closing) return;
   closing = true;
+  clearInterval(idleTimer);
   await app.close();
   store.close();
 }

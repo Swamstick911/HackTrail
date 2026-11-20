@@ -2,7 +2,7 @@
   "name": "hacktrail",
   "displayName": "HackTrail",
   "description": "Local project time tracking from editor activity, with an automatic idle cutoff.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "swamstick911",
   "license": "AGPL-3.0-only",
   "repository": {
@@ -16,7 +16,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "main": "./dist/extension.cjs",
   "extensionKind": [
@@ -32,7 +33,7 @@
     "commands": [
       {
         "command": "hacktrail.connect",
-        "title": "HackTrail: Connect This Workspace"
+        "title": "HackTrail: Enable Tracking"
       },
       {
         "command": "hacktrail.toggleTracking",
@@ -41,6 +42,10 @@
       {
         "command": "hacktrail.openDashboard",
         "title": "HackTrail: Open Dashboard"
+      },
+      {
+        "command": "hacktrail.disableClaude",
+        "title": "HackTrail: Disable Claude Tracking"
       }
     ]
   }

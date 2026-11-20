@@ -5,17 +5,27 @@ import { Dialog } from './dialogs.js';
 import { Icon } from './icons.js';
 
 export function ConnectionsDialog({ project, onClose }: { project: Project; onClose: () => void }) {
-  const [tab, setTab] = useState<'editor' | 'claude'>('editor');
-  const [available, setAvailable] = useState(false);
+  const [available, setAvailable] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const command =
-    'npm run connect:claude -- --project ' + project.id + ' --workspace "YOUR_PROJECT_FOLDER"';
+  const editorLink =
+    'vscode://swamstick911.hacktrail/enable?' +
+    new URLSearchParams({
+      projectId: project.id,
+      collector: import.meta.env.DEV ? 'http://127.0.0.1:47654' : window.location.origin,
+    }).toString();
   useEffect(() => {
+    let active = true;
     void api<{ editorDownloadAvailable: boolean }>('/integrations')
-      .then((result) => setAvailable(result.editorDownloadAvailable))
-      .catch((error) => setError(errorMessage(error)));
+      .then((result) => {
+        if (active) setAvailable(result.editorDownloadAvailable);
+      })
+      .catch((error) => {
+        if (active) setError(errorMessage(error));
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function download() {
@@ -34,44 +44,31 @@ export function ConnectionsDialog({ project, onClose }: { project: Project; onCl
       <p className="muted">
         Bring live activity into <strong>{project.name}</strong>.
       </p>
-      <div className="segmented" aria-label="Connection type">
-        <button aria-pressed={tab === 'editor'} onClick={() => setTab('editor')}>
-          VS Code
-        </button>
-        <button aria-pressed={tab === 'claude'} onClick={() => setTab('claude')}>
-          Claude Code
-        </button>
-      </div>
       {project.isExample ? (
         <p className="callout">
-          This is an example. Create your own project before connecting an editor.
+          This is an example. Create your own project before enabling tracking.
         </p>
-      ) : tab === 'editor' ? (
+      ) : (
         <>
           <div className="connection-intro">
             <span className="tool-symbol editor">
               <Icon name="code" />
             </span>
             <div>
-              <h3>Your editor does the tracking.</h3>
-              <p>Install once, connect this workspace, and keep working.</p>
+              <h3>Set it up once. Then just work.</h3>
+              <p>VS Code takes care of the collector and Claude hooks.</p>
             </div>
           </div>
           <ol className="setup-steps">
             <li>Download the extension below.</li>
             <li>
-              In VS Code, open the command palette and run{' '}
-              <strong>Extensions: Install from VSIX</strong>. Select the downloaded file.
+              In VS Code, run <strong>Extensions: Install from VSIX</strong> and select the file.
             </li>
             <li>
-              Open your project folder. Run <strong>HackTrail: Connect This Workspace</strong>, then
-              select <strong>{project.name}</strong>.
+              Open your project folder, then use <strong>Enable in VS Code</strong> below to link it
+              to <strong>{project.name}</strong>. Accept the tracking prompt.
             </li>
           </ol>
-          <p className="small muted">
-            Keep HackTrail running. Only activity timestamps are sent; code and file names stay out
-            of the tracker. The extension also works in compatible Cursor versions.
-          </p>
           <button
             className="primary full-width"
             disabled={busy || !available}
@@ -80,47 +77,32 @@ export function ConnectionsDialog({ project, onClose }: { project: Project; onCl
             <Icon name="download" />
             {busy ? 'Preparing download...' : 'Download VS Code extension'}
           </button>
-          {!available && (
+          <p>
+            <a className="text-button" href={editorLink}>
+              Enable in VS Code
+            </a>
+          </p>
+          <p className="small muted">
+            Already installed? Use the link above. Starting from VS Code also works:{' '}
+            <strong>HackTrail: Enable Tracking</strong> creates a project from your folder
+            automatically.
+          </p>
+          <p className="callout">
+            Claude tracking is included when you choose <strong>Enable tracking</strong>. No Claude
+            account connection or terminal command is needed. Choose <strong>Editor only</strong> to
+            leave it out.
+          </p>
+          <p className="small muted">
+            Everything stays on this computer. We collect activity timestamps, tool names, outcomes,
+            and agent runtime. Code, prompt text, tool arguments, and output are excluded. Restart
+            an existing Claude session once to load the hooks.
+          </p>
+          {available === false && (
             <p className="small muted">
-              The extension package is not built yet. Run <code>npm run package:extension</code> in
-              HackTrail, then reopen this dialog.
+              The extension download is unavailable from this collector. Use the extension package
+              supplied with your HackTrail build.
             </p>
           )}
-        </>
-      ) : (
-        <>
-          <div className="connection-intro">
-            <span className="tool-symbol claude">
-              <Icon name="activity" />
-            </span>
-            <div>
-              <h3>Keep agent work in the picture.</h3>
-              <p>Prompts, tool events, and agent runtime appear live.</p>
-            </div>
-          </div>
-          <p>
-            From the HackTrail terminal, run this command. Replace <code>YOUR_PROJECT_FOLDER</code>{' '}
-            with the folder where you use Claude Code.
-          </p>
-          <pre className="command-block">{command}</pre>
-          <button
-            onClick={() => {
-              void navigator.clipboard
-                .writeText(command)
-                .then(() => setCopied(true))
-                .catch(() => setError('Select and copy the command above.'));
-            }}
-          >
-            {copied ? 'Copied' : 'Copy command'}
-          </button>
-          <p className="small muted">
-            This adds local hooks and keeps your existing Claude settings. Restart Claude afterward.
-            Hooks collect event metadata without saving prompts, code, or tool output.
-          </p>
-          <p className="small muted">
-            Agent runtime is shown separately from your editor time. Pending events retry on the
-            next hook when the collector is back.
-          </p>
         </>
       )}
       {error && (

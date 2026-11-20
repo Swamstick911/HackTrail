@@ -18,6 +18,7 @@ interface AppOptions {
   webRoot?: string;
   development?: boolean;
   extensionPath?: string;
+  onActivity?: () => void;
 }
 
 const importSchema = z
@@ -59,6 +60,7 @@ export function createApp(options: AppOptions) {
   });
 
   app.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode < 400) options.onActivity?.();
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');

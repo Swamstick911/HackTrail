@@ -137,7 +137,7 @@ test('example timeline is labeled, inspectable, and responsive', async ({ page }
   expect(externalRequests).toEqual([]);
 });
 
-test('create, preview, import, inspect, export, replay, and delete', async ({ page }) => {
+test('create, preview, import, inspect, export, replay, and delete', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New project', exact: true }).first().click();
   await page.getByLabel('Project name').fill('Browser test project');
@@ -146,6 +146,20 @@ test('create, preview, import, inspect, export, replay, and delete', async ({ pa
     page.getByRole('heading', { name: 'Browser test project', exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Connect your tools' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Enable in VS Code' })).toHaveAttribute(
+    'href',
+    /^vscode:\/\/swamstick911\.hacktrail\/enable\?projectId=/,
+  );
+  await expect(page.getByRole('dialog')).toContainText(
+    'No Claude account connection or terminal command',
+  );
+  await page.screenshot({ path: testInfo.outputPath('setup-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: testInfo.outputPath('setup-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole('button', { name: 'Close dialog' }).click();
 
   async function importFile() {
@@ -161,7 +175,7 @@ test('create, preview, import, inspect, export, replay, and delete', async ({ pa
   }
 
   await importFile();
-  await expect(page.getByRole('status')).toContainText('4 events imported');
+  await expect(page.getByRole('status').filter({ hasText: '4 events imported' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Inspect Tool result', exact: true })).toHaveCount(
     1,
   );
@@ -194,7 +208,9 @@ test('create, preview, import, inspect, export, replay, and delete', async ({ pa
   ).toBeVisible();
   await expect(page.locator('.event-row')).toHaveCount(4);
   await importFile();
-  await expect(page.getByRole('status')).toContainText('0 events imported. 4 duplicates skipped.');
+  await expect(
+    page.getByRole('status').filter({ hasText: '0 events imported. 4 duplicates skipped.' }),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Delete project', exact: true }).click();
   await page
     .getByRole('dialog')

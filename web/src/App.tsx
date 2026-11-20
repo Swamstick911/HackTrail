@@ -273,7 +273,7 @@ export function App() {
           <div className="collector-status">
             <span className={'status-dot ' + (connected ? 'online' : '')} />
             {connected ? 'Collector online' : 'Collector offline'}
-            <span>v0.2</span>
+            <span>v0.3</span>
           </div>
         </div>
       </aside>
@@ -511,7 +511,7 @@ export function App() {
                         <p>
                           {actor || search
                             ? 'Try another search or filter.'
-                            : 'Connect Claude Code for live events, or import an existing session.'}
+                            : 'Enable tracking in VS Code for live events, or import an existing session.'}
                         </p>
                         {!actor && !search && (
                           <button onClick={() => setDialog('connect')}>Connect your tools</button>

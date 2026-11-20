@@ -1,6 +1,6 @@
 {
   "name": "hacktrail",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -16,7 +16,7 @@
     "dev:server": "tsx watch src/server/main.ts",
     "dev:web": "vite --host 127.0.0.1",
     "build": "tsc -p tsconfig.server.json && vite build && node scripts/build-adapters.mjs && node scripts/package-extension.mjs",
-    "package:extension": "node scripts/build-adapters.mjs && node scripts/package-extension.mjs",
+    "package:extension": "vite build && node scripts/build-adapters.mjs && node scripts/package-extension.mjs",
     "connect:claude": "node dist/cli/connect-claude.js",
     "start": "node dist/server/main.js",
     "typecheck": "tsc --noEmit",

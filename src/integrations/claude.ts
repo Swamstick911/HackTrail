@@ -2,6 +2,7 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { LocalClient } from '../shared/local-client.js';
 import type { Project } from '../shared/events.js';
+import { randomUUID } from 'node:crypto';
 
 const hookNames = [
   'UserPromptSubmit',
@@ -57,6 +58,7 @@ export async function connectClaude(options: {
     if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'))
       throw error;
   }
+  let hadHooks = false;
   if (!options.remove) {
     if (!options.projectId)
       throw new Error('Provide --project with the project ID shown in HackTrail.');
@@ -76,6 +78,14 @@ export async function connectClaude(options: {
       )
     )
       throw new Error('An existing hook group is invalid. Settings were not changed.');
+    if (
+      groups.some((group) =>
+        group.hooks.some((hook) =>
+          [command, previousCommand, 'node ' + script].includes(hook.command ?? ''),
+        ),
+      )
+    )
+      hadHooks = true;
     hooks[name] = groups
       .map((group) => ({
         ...group,
@@ -87,12 +97,13 @@ export async function connectClaude(options: {
     if (!options.remove) hooks[name]!.push({ hooks: [{ type: 'command', command, timeout: 3 }] });
     if (!hooks[name]!.length) delete hooks[name];
   }
+  if (options.remove && !hadHooks) return settingsPath;
   await mkdir(localDirectory, { recursive: true, mode: 0o700 });
   await mkdir(dirname(settingsPath), { recursive: true });
   const nextSettings = JSON.stringify({ ...settings, hooks }, null, 2) + '\n';
   if (original && original !== nextSettings)
     await writeFile(
-      join(localDirectory, 'claude-settings-backup-' + Date.now() + '.json'),
+      join(localDirectory, 'claude-settings-backup-' + Date.now() + '-' + randomUUID() + '.json'),
       original,
       { mode: 0o600, flag: 'wx' },
     );

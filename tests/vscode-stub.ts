@@ -9,6 +9,12 @@ function subscribe(name: string) {
 export function emit(name: string, event: unknown) {
   listeners.get(name)?.(event);
 }
+export async function openEditorUri(uri: { path: string; query: string }) {
+  const handler = listeners.get('uriHandler') as unknown as {
+    handleUri(uri: unknown): Promise<void>;
+  };
+  await handler.handleUri(uri);
+}
 export function resetEditor() {
   listeners.clear();
   commandsByName.clear();
@@ -26,12 +32,23 @@ export const window = {
   onDidChangeWindowState: subscribe('focus'),
   onDidChangeActiveTextEditor: subscribe('editor'),
   onDidChangeTextEditorSelection: subscribe('selection'),
-  showInformationMessage: async () => undefined,
-  showErrorMessage: async () => undefined,
+  showInformationMessage: async (..._args: unknown[]): Promise<string | undefined> => undefined,
+  showErrorMessage: async (..._args: unknown[]) => undefined,
   showInputBox: async () => undefined,
   showQuickPick: async () => undefined,
+  showWorkspaceFolderPick: async () => undefined,
+  showWarningMessage: async (..._args: unknown[]) => undefined,
+  registerUriHandler: subscribe('uriHandler'),
+  withProgress: async (
+    _options: unknown,
+    operation: (progress: { report: (value: unknown) => void }) => unknown,
+  ) => operation({ report() {} }),
 };
-export const env = { appName: 'Visual Studio Code', openExternal: async () => true };
+export const env = {
+  appName: 'Visual Studio Code',
+  openExternal: async () => true,
+  asExternalUri: async (uri: unknown) => uri,
+};
 export const commands = {
   registerCommand(name: string, action: (...args: any[]) => any) {
     commandsByName.set(name, action);
@@ -43,4 +60,5 @@ export const commands = {
 };
 export const Uri = { parse: (value: string) => value };
 export const StatusBarAlignment = { Left: 1 };
+export const ProgressLocation = { Notification: 15 };
 export const TextEditorSelectionChangeKind = { Keyboard: 1, Mouse: 2, Command: 3 };

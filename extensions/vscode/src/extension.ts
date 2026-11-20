@@ -4,15 +4,25 @@ import { ActivityClock, type ActivityInterval } from '../../../src/shared/activi
 import { CollectorError, LocalClient } from '../../../src/shared/local-client.js';
 import type { TimeSample } from '../../../src/shared/tracking.js';
 import type { Project } from '../../../src/shared/events.js';
+import { join } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { connectClaude } from '../../../src/integrations/claude.js';
+import { CollectorManager, defaultCollectorUrl } from './collector.js';
 
 interface Connection {
   projectId: string;
   projectName: string;
   url: string;
+  workspaceUri?: string;
+  workspacePath?: string;
 }
 
 export function activate(context: vscode.ExtensionContext) {
   if (!vscode.workspace.isTrusted) return;
+  const collector = new CollectorManager(context.extensionPath, context.globalStorageUri?.fsPath);
+  let settingUp = false;
+  let welcomeTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastRestartAttempt = 0;
   let connection = context.workspaceState.get<Connection>('connection');
   let enabled = context.workspaceState.get('enabled', false);
   let queue = context.workspaceState.get<TimeSample[]>('queue', []);
@@ -34,7 +44,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   function editorInWorkspace() {
     const document = vscode.window.activeTextEditor?.document;
-    return Boolean(document && vscode.workspace.getWorkspaceFolder(document.uri));
+    const folder = document && vscode.workspace.getWorkspaceFolder(document.uri);
+    return Boolean(
+      folder && (!connection?.workspaceUri || folder.uri.toString() === connection.workspaceUri),
+    );
   }
 
   function remember(interval: ActivityInterval | null) {
@@ -73,7 +86,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   function render() {
     const state = !connection
-      ? 'Connect'
+      ? 'Enable tracking'
       : !enabled || globallyPaused
         ? 'Paused'
         : !online
@@ -87,7 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
         '\n' +
         queue.length +
         ' samples waiting to sync. Click to pause or resume.'
-      : 'Connect a project to begin.';
+      : 'Enable tracking for this workspace.';
     status.command = connection ? 'hacktrail.toggleTracking' : 'hacktrail.connect';
   }
 
@@ -149,57 +162,174 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('hacktrail.connect', async () => {
-      if (!vscode.workspace.workspaceFolders?.length) {
-        void vscode.window.showInformationMessage('Open a project folder first.');
+  async function setup(projectId?: string, url = connection?.url ?? defaultCollectorUrl) {
+    if (settingUp) return;
+    settingUp = true;
+    try {
+      const folders = vscode.workspace.workspaceFolders;
+      if (!vscode.workspace.isTrusted || !folders?.length) {
+        void vscode.window.showInformationMessage('Open a trusted project folder first.');
         return;
       }
-      const url = await vscode.window.showInputBox({
-        title: 'Connect to HackTrail',
-        prompt: 'Local collector address',
-        value: connection?.url ?? 'http://127.0.0.1:47654',
-        ignoreFocusOut: true,
-      });
-      if (!url) return;
+      const folder =
+        folders.length === 1
+          ? folders[0]
+          : await vscode.window.showWorkspaceFolderPick({
+              placeHolder: 'Which folder should HackTrail track?',
+            });
+      if (!folder) return;
+      if (folder.uri.scheme !== 'file')
+        throw new Error('Open a folder on the extension host to track it.');
+      const choice = await vscode.window.showInformationMessage(
+        'Enable HackTrail for ' + folder.name + '?',
+        {
+          modal: true,
+          detail:
+            'HackTrail starts a local collector and records editor activity timestamps. Including Claude adds local hooks for tool names, outcomes, and agent runtime. No code, prompt text, tool arguments, or output is collected. Setup may download a runtime from nodejs.org once.',
+        },
+        'Enable tracking',
+        'Editor only',
+      );
+      await context.workspaceState.update('setupSeen', true);
+      if (!choice) return;
+      let claudeReady = false;
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Setting up HackTrail' },
+        async (progress) => {
+          const report = (message: string) => progress.report({ message });
+          await collector.ensure(url, report);
+          const nextClient = new LocalClient(url);
+          const workspacePath = await realpath(folder.uri.fsPath);
+          const identity =
+            process.platform === 'win32' ? workspacePath.toLowerCase() : workspacePath;
+          const project = await nextClient.request<Project>('/workspaces/resolve', {
+            key: createHash('sha256').update(identity).digest('hex'),
+            name: folder.name.replace(/[\u0000-\u001f]/g, '').slice(0, 80) || 'My project',
+            projectId:
+              projectId ??
+              (!connection?.workspaceUri || connection.workspaceUri === folder.uri.toString()
+                ? connection?.projectId
+                : undefined),
+          });
+          remember(clock.focus(Date.now(), false));
+          await flush();
+          connection = {
+            projectId: project.id,
+            projectName: project.name,
+            url: nextClient.baseUrl,
+            workspaceUri: folder.uri.toString(),
+            workspacePath,
+          };
+          client = nextClient;
+          enabled = true;
+          clock = new ActivityClock(Date.now());
+          await context.workspaceState.update('connection', connection);
+          await context.workspaceState.update('enabled', true);
+          await context.workspaceState.update('claudeEnabled', choice === 'Enable tracking');
+          if (choice === 'Enable tracking') {
+            try {
+              await installClaude(report);
+              claudeReady = true;
+            } catch (error) {
+              void vscode.window.showWarningMessage(
+                'Editor tracking is ready, but Claude setup needs attention: ' +
+                  message(error) +
+                  ' Run HackTrail: Enable Tracking to retry.',
+              );
+            }
+          } else {
+            await removeClaude();
+          }
+          setFocus();
+          await flush();
+          await vscode.env.openExternal(
+            await vscode.env.asExternalUri(vscode.Uri.parse(connection.url)),
+          );
+        },
+      );
+      void vscode.window.showInformationMessage(
+        claudeReady
+          ? 'HackTrail is ready. New Claude sessions will load the local hooks; restart an existing session once.'
+          : 'HackTrail is ready. Editor activity stays on this computer.',
+      );
+    } catch (error) {
+      void vscode.window.showErrorMessage(message(error));
+    } finally {
+      settingUp = false;
+    }
+  }
+
+  function message(error: unknown) {
+    return error instanceof Error ? error.message : 'Could not set up HackTrail.';
+  }
+
+  async function installClaude(report: (message: string) => void = () => {}) {
+    if (!connection?.workspacePath) return;
+    await connectClaude({
+      workspace: connection.workspacePath,
+      projectId: connection.projectId,
+      url: connection.url,
+      bundlePath: join(context.extensionPath, 'dist', 'claude-hook.mjs'),
+      runtimePath: await collector.runtime(report),
+    });
+  }
+
+  async function removeClaude() {
+    if (!connection?.workspacePath) return;
+    await connectClaude({
+      workspace: connection.workspacePath,
+      url: connection.url,
+      remove: true,
+      bundlePath: join(context.extensionPath, 'dist', 'claude-hook.mjs'),
+    });
+    await context.workspaceState.update('claudeEnabled', false);
+  }
+
+  async function restoreCollector() {
+    if (
+      !connection ||
+      (!enabled && !context.workspaceState.get('claudeEnabled', false)) ||
+      settingUp
+    )
+      return;
+    lastRestartAttempt = Date.now();
+    try {
+      await collector.ensure(connection.url);
+      if (context.workspaceState.get('claudeEnabled', false)) await installClaude();
+      await flush();
+    } catch (error) {
+      online = false;
+      status.tooltip = message(error);
+    }
+  }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hacktrail.connect', () => setup()),
+    vscode.commands.registerCommand('hacktrail.disableClaude', async () => {
       try {
-        const nextClient = new LocalClient(url);
-        const projects = (await nextClient.request<Project[]>('/projects')).filter(
-          (project) => !project.isExample,
+        await removeClaude();
+        void vscode.window.showInformationMessage(
+          'HackTrail Claude hooks removed. Restart existing Claude sessions to apply this.',
         );
-        if (!projects.length) {
+      } catch (error) {
+        void vscode.window.showErrorMessage(message(error));
+      }
+    }),
+    vscode.window.registerUriHandler({
+      handleUri: async (uri) => {
+        if (uri.path !== '/enable') return;
+        clearTimeout(welcomeTimer);
+        if (settingUp) {
           void vscode.window.showInformationMessage(
-            'Create a project in the HackTrail dashboard first.',
+            'Finish the open HackTrail setup, then use the dashboard link again to select its project.',
           );
           return;
         }
-        const chosen = await vscode.window.showQuickPick(
-          projects.map((project) => ({ label: project.name, project })),
-          { title: 'Which project is this workspace?', ignoreFocusOut: true },
-        );
-        if (!chosen) return;
-        remember(clock.focus(Date.now(), false));
-        await flush();
-        connection = {
-          projectId: chosen.project.id,
-          projectName: chosen.project.name,
-          url: nextClient.baseUrl,
-        };
-        client = nextClient;
-        enabled = true;
-        clock = new ActivityClock(Date.now());
-        await context.workspaceState.update('connection', connection);
-        await context.workspaceState.update('enabled', true);
-        setFocus();
-        await flush();
-        void vscode.window.showInformationMessage(
-          'HackTrail is connected. Editor activity will be estimated locally; code and file names stay out of the tracker.',
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(
-          error instanceof Error ? error.message : 'Could not connect to HackTrail.',
-        );
-      }
+        const params = new URLSearchParams(uri.query);
+        const projectId = params.get('projectId');
+        if (!projectId || projectId.length > 128) return;
+        await setup(projectId, params.get('collector') ?? defaultCollectorUrl);
+      },
     }),
   );
   context.subscriptions.push(
@@ -216,9 +346,17 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand('hacktrail.openDashboard', () =>
-      vscode.env.openExternal(vscode.Uri.parse(connection?.url ?? 'http://127.0.0.1:47654')),
-    ),
+    vscode.commands.registerCommand('hacktrail.openDashboard', async () => {
+      if (!connection) return setup();
+      try {
+        await collector.ensure(connection.url);
+        await vscode.env.openExternal(
+          await vscode.env.asExternalUri(vscode.Uri.parse(connection.url)),
+        );
+      } catch (error) {
+        void vscode.window.showErrorMessage(message(error));
+      }
+    }),
   );
   context.subscriptions.push(vscode.window.onDidChangeWindowState(setFocus));
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(setFocus));
@@ -242,15 +380,27 @@ export function activate(context: vscode.ExtensionContext) {
   const timer = setInterval(() => {
     remember(clock.tick(Date.now()));
     void flush();
+    if (!online && Date.now() - lastRestartAttempt > 60_000) void restoreCollector();
     render();
   }, 15_000);
   context.subscriptions.push({
     dispose: () => {
       clearInterval(timer);
+      clearTimeout(welcomeTimer);
       remember(clock.focus(Date.now(), false));
     },
   });
   persist();
   setFocus();
   void flush();
+  if (connection?.workspacePath) void restoreCollector();
+  welcomeTimer = setTimeout(() => {
+    if (
+      !connection &&
+      !settingUp &&
+      !context.workspaceState.get('setupSeen', false) &&
+      vscode.workspace.workspaceFolders?.length
+    )
+      void setup();
+  }, 1000);
 }
