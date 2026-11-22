@@ -1,7 +1,8 @@
 import { Database } from './database.js';
 import { randomUUID } from 'node:crypto';
 import { TrackingStore } from './tracking-store.js';
-import { reviewActivity } from '../shared/review.js';
+import type { TimeSlice } from '../shared/tracking.js';
+import { reviewActivity, maxAgentRunMs } from '../shared/review.js';
 import {
   eventSchema,
   type ActivityEvent,
@@ -128,14 +129,21 @@ export class ActivityStore {
     })();
   }
 
-  review(id: string, from: string, to: string) {
+  review(id: string, from: string, to: string, slices: TimeSlice[] = []) {
     this.getProject(id);
     const rows = this.database
       .prepare(
         'SELECT payload FROM events WHERE project_id = ? AND occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at, id',
       )
-      .all(id, from, to) as unknown as EventRow[];
-    return reviewActivity(rows.map((row) => JSON.parse(row.payload) as ActivityEvent));
+      .all(
+        id,
+        new Date(Date.parse(from) - maxAgentRunMs).toISOString(),
+        new Date(Date.parse(to) + maxAgentRunMs).toISOString(),
+      ) as unknown as EventRow[];
+    return reviewActivity(
+      rows.map((row) => JSON.parse(row.payload) as ActivityEvent),
+      { from: Date.parse(from), to: Date.parse(to), slices },
+    );
   }
 
   ingest(input: ActivityEvent[]) {

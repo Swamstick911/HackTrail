@@ -195,12 +195,14 @@ export function createApp(options: AppOptions) {
     const to = Date.parse(range.to);
     if (to <= from || to - from > 32 * 24 * 60 * 60 * 1000)
       throw new StoreError('Choose a time range of up to 32 days.', 400);
+    const tracking = options.store.tracking.report(request.params.id, from, to);
     return {
-      tracking: options.store.tracking.report(request.params.id, from, to),
+      tracking,
       review: options.store.review(
         request.params.id,
         new Date(from).toISOString(),
         new Date(to).toISOString(),
+        tracking.slices,
       ),
     };
   });

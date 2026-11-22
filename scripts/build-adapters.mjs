@@ -24,14 +24,19 @@ await build({
   external: ['vscode'],
   outfile: 'extensions/vscode/dist/extension.cjs',
 });
-await build({
-  entryPoints: ['src/cli/claude-hook.ts'],
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node26',
-  outfile: 'dist/cli/claude-hook.mjs',
-});
-copyFileSync('LICENSE', 'extensions/vscode/LICENSE');
-copyFileSync('dist/cli/claude-hook.mjs', 'extensions/vscode/dist/claude-hook.mjs');
+for (const adapter of ['claude', 'codex']) {
+  await build({
+    entryPoints: ['src/cli/' + adapter + '-hook.ts'],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node26',
+    outfile: 'dist/cli/' + adapter + '-hook.mjs',
+  });
+  copyFileSync('LICENSE', 'extensions/vscode/LICENSE');
+  copyFileSync(
+    'dist/cli/' + adapter + '-hook.mjs',
+    'extensions/vscode/dist/' + adapter + '-hook.mjs',
+  );
+}
 mkdirSync('releases', { recursive: true });

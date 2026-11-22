@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { gitContextSchema, type GitContext } from './events.js';
 
 export const trackingPolicy = {
   version: 1,
@@ -23,6 +24,7 @@ export const timeSampleSchema = z
     startedAt: instant,
     endedAt: instant,
     signal: z.enum(['keyboard', 'mouse']),
+    git: gitContextSchema.optional(),
   })
   .strict()
   .refine((sample) => {
@@ -47,6 +49,7 @@ export interface TimeSlice {
   startedAt: string;
   endedAt: string;
   sampleId: string;
+  git?: GitContext;
 }
 export interface TrackingClient {
   id: string;

@@ -6,6 +6,7 @@ import {
   type TrackingClient,
   type TrackingReport,
   type TimeSlice,
+  type TimeSample,
 } from '../shared/tracking.js';
 import { StoreError } from './store.js';
 
@@ -124,17 +125,19 @@ export class TrackingStore {
   report(projectId: string, from: number, to: number, now = Date.now()): TrackingReport {
     const rows = this.database
       .prepare(
-        'SELECT project_id, sample_id, start, end FROM time_slices WHERE project_id = ? AND start < ? AND end > ? ORDER BY start',
+        'SELECT s.project_id, s.sample_id, s.start, s.end, t.payload FROM time_slices s JOIN time_samples t ON t.id = s.sample_id WHERE s.project_id = ? AND s.start < ? AND s.end > ? ORDER BY s.start',
       )
       .all(projectId, to, from) as {
       project_id: string;
       sample_id: string;
+      payload: string;
       start: number;
       end: number;
     }[];
     const slices: TimeSlice[] = rows.map((row) => ({
       projectId: row.project_id,
       sampleId: row.sample_id,
+      git: (JSON.parse(row.payload) as TimeSample).git,
       startedAt: new Date(Math.max(from, row.start)).toISOString(),
       endedAt: new Date(Math.min(to, row.end)).toISOString(),
     }));

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const sources = ['claude-code', 'vscode', 'git', 'manual'] as const;
+export const sources = ['claude-code', 'codex', 'vscode', 'git', 'manual'] as const;
 export const actors = ['user', 'agent', 'tool', 'unknown'] as const;
 export const eventKinds = [
   'user_prompt',
@@ -10,6 +10,7 @@ export const eventKinds = [
   'editor_edit',
   'editor_focus',
   'git_commit',
+  'git_checkpoint',
   'work_note',
   'agent_started',
   'agent_stopped',
@@ -24,6 +25,15 @@ const shortText = z.string().max(160);
 const timestamp = z.iso
   .datetime({ offset: true })
   .transform((value) => new Date(value).toISOString());
+
+export const gitContextSchema = z
+  .object({
+    repositoryId: z.string().regex(/^[a-f0-9]{64}$/),
+    commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+    branch: z.string().max(160).optional(),
+  })
+  .strict();
+export type GitContext = z.infer<typeof gitContextSchema>;
 
 export const eventSchema = z
   .object({
@@ -40,8 +50,15 @@ export const eventSchema = z
         callId: shortText.optional(),
         model: shortText.optional(),
         sessionId: shortText.optional(),
+        turnId: shortText.optional(),
         hook: shortText.optional(),
         success: z.boolean().optional(),
+        interrupted: z.boolean().optional(),
+        git: gitContextSchema.optional(),
+        filesChanged: z.number().int().nonnegative().optional(),
+        linesAdded: z.number().int().nonnegative().optional(),
+        linesDeleted: z.number().int().nonnegative().optional(),
+        checkpointReason: z.enum(['connected', 'head-changed', 'history-changed']).optional(),
         excerpt: z.string().max(500).optional(),
       })
       .strict()
@@ -99,6 +116,7 @@ export const kindLabels: Record<EventKind, string> = {
   editor_edit: 'Editor change',
   editor_focus: 'Editor focus',
   git_commit: 'Git commit',
+  git_checkpoint: 'Git checkpoint',
   work_note: 'Work note',
   agent_started: 'Agent started',
   agent_stopped: 'Agent finished',
