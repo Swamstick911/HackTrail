@@ -56,7 +56,7 @@ export function ConnectionsDialog({ project, onClose }: { project: Project; onCl
             </span>
             <div>
               <h3>Set it up once. Then just work.</h3>
-              <p>VS Code takes care of the collector and Claude hooks.</p>
+              <p>VS Code manages the collector, Git context, and agent hooks.</p>
             </div>
           </div>
           <ol className="setup-steps">
@@ -88,14 +88,16 @@ export function ConnectionsDialog({ project, onClose }: { project: Project; onCl
             automatically.
           </p>
           <p className="callout">
-            Claude tracking is included when you choose <strong>Enable tracking</strong>. No Claude
-            account connection or terminal command is needed. Choose <strong>Editor only</strong> to
-            leave it out.
+            Claude, Codex, and Git collection are included when you choose{' '}
+            <strong>Enable tracking</strong>. No Claude account connection or terminal command is
+            needed. Choose <strong>Editor only</strong> to skip all three.
           </p>
           <p className="small muted">
             Everything stays on this computer. We collect activity timestamps, tool names, outcomes,
-            and agent runtime. Code, prompt text, tool arguments, and output are excluded. Restart
-            an existing Claude session once to load the hooks.
+            agent runtime, and Git commit IDs, branch names, and change counts. Code, prompt text,
+            tool arguments, and output are excluded. Restart an existing Claude session once to load
+            the hooks. In Codex, open /hooks to review and trust the new hooks. Until then, no Codex
+            activity is recorded.
           </p>
           {available === false && (
             <p className="small muted">
@@ -139,8 +141,15 @@ export function TimePolicyDialog({ onClose }: { onClose: () => void }) {
         </dd>
         <dt>Agent work stays separate</dt>
         <dd>
-          Claude runtime comes from paired live start and stop hooks. It is never added to editor
-          time. Interrupted or unmatched runs are marked for review.
+          Claude and Codex runtime comes from paired live start and stop hooks. Overlapping runs
+          count once. It is never added to editor time. Interrupted runs count up to their interrupt
+          event. Unmatched boundaries and runs longer than 12 hours are excluded.
+        </dd>
+        <dt>Git adds context</dt>
+        <dd>
+          Commit IDs and branches link samples to the last observed repository state. Checkpoints
+          and change counts do not add time or prove authorship. Git collection requires opening the
+          repository root.
         </dd>
         <dt>Some work cannot be observed</dt>
         <dd>

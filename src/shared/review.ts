@@ -38,6 +38,7 @@ export function reviewActivity(
   const visible = ordered.filter((event) => inRange(Date.parse(event.occurredAt)));
   const openRuns = new Map<string, number>();
   const ranges: Range[] = [];
+  const finishedSessions = new Set<string>();
   let incompleteRuns = 0;
   let closedRuns = 0;
   let interruptedRuns = 0;
@@ -53,9 +54,12 @@ export function reviewActivity(
       const previous = openRuns.get(key);
       if (previous !== undefined && inRange(previous)) incompleteRuns++;
       openRuns.set(key, time);
+      finishedSessions.delete(key);
     }
     if (event.kind === 'agent_stopped') {
       const start = openRuns.get(key);
+      if (start === undefined && event.metadata.hook === 'SessionEnd' && finishedSessions.has(key))
+        continue;
       if (start !== undefined && time >= start && time - start <= maxAgentRunMs) {
         if (time > from && start < to) {
           ranges.push(clip({ start, end: time }));
@@ -63,6 +67,7 @@ export function reviewActivity(
           if (event.metadata.interrupted) interruptedRuns++;
         }
       } else if (inRange(time) || (start !== undefined && inRange(start))) incompleteRuns++;
+      if (start !== undefined) finishedSessions.add(key);
       openRuns.delete(key);
     }
   }

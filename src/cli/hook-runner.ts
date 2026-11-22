@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { LocalClient } from '../shared/local-client.js';
@@ -32,16 +32,18 @@ export async function runHook(
     const pending = (await readdir(queueDirectory)).filter((name) => name.endsWith('.json')).sort();
     if (pending.length >= 5000) {
       process.stderr.write(
-        'HackTrail queue is full. Start the collector to sync pending activity.\n',
+        'HackTrail queue is full. This event was skipped; retrying saved activity.\n',
       );
-      return;
+    } else {
+      const entry = Date.now() + '-' + randomUUID() + '.json';
+      await writeFile(join(queueDirectory, entry + '.tmp'), JSON.stringify(events), {
+        mode: 0o600,
+        flag: 'wx',
+      });
+      await rename(join(queueDirectory, entry + '.tmp'), join(queueDirectory, entry));
+      pending.push(entry);
     }
-    const entry = Date.now() + '-' + randomUUID() + '.json';
-    await writeFile(join(queueDirectory, entry), JSON.stringify(events), {
-      mode: 0o600,
-      flag: 'wx',
-    });
-    const names = [...pending, entry].slice(0, 100);
+    const names = pending.slice(0, 100);
     const queued: { name: string; events: ActivityEvent[] }[] = [];
     for (const name of names) {
       try {

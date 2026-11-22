@@ -17,8 +17,14 @@ async function running(url: string) {
   const health = (await response.json().catch(() => null)) as {
     service?: string;
     setupVersion?: number;
+    evidenceVersion?: number;
   } | null;
-  if (!response.ok || health?.service !== 'hacktrail' || health.setupVersion !== 1)
+  if (
+    !response.ok ||
+    health?.service !== 'hacktrail' ||
+    health.setupVersion !== 1 ||
+    health.evidenceVersion !== 1
+  )
     throw new Error(
       'Another app or an older HackTrail is using this address. Stop it, then enable tracking again.',
     );

@@ -13,8 +13,18 @@ export function dateLabel(value: string) {
 function eventDescription(event: ActivityEvent) {
   if (event.metadata.excerpt) return event.metadata.excerpt;
   if (event.metadata.toolName) return event.metadata.toolName;
-  if (event.kind === 'agent_started') return 'Claude began working on a request.';
-  if (event.kind === 'agent_stopped') return 'The agent run ended.';
+  if (event.kind === 'agent_started')
+    return (event.source === 'codex' ? 'Codex' : 'The agent') + ' began working on a request.';
+  if (event.kind === 'git_checkpoint' && event.metadata.git)
+    return (
+      'Observed ' +
+      event.metadata.git.commit.slice(0, 10) +
+      ' on ' +
+      (event.metadata.git.branch ?? 'detached HEAD') +
+      '.'
+    );
+  if (event.kind === 'agent_stopped')
+    return event.metadata.interrupted ? 'The agent run was interrupted.' : 'The agent run ended.';
   if (event.kind === 'tool_result') {
     if (event.metadata.success === false) return 'The tool reported an error.';
     if (event.metadata.success === true) return 'The tool reported success.';
@@ -119,6 +129,29 @@ export function EvidencePanel({ event, onClose }: { event: ActivityEvent; onClos
           <>
             <dt>Tool</dt>
             <dd>{event.metadata.toolName}</dd>
+          </>
+        )}
+        {event.metadata.git && (
+          <>
+            <dt>Observed commit</dt>
+            <dd className="mono">{event.metadata.git.commit}</dd>
+            <dt>Branch</dt>
+            <dd>{event.metadata.git.branch ?? 'Detached HEAD'}</dd>
+            {event.metadata.filesChanged !== undefined && (
+              <>
+                <dt>Changes between observations</dt>
+                <dd>
+                  {event.metadata.filesChanged} files, +{event.metadata.linesAdded} / -
+                  {event.metadata.linesDeleted} text lines
+                </dd>
+              </>
+            )}
+          </>
+        )}
+        {event.metadata.turnId && (
+          <>
+            <dt>Agent turn</dt>
+            <dd className="mono">{event.metadata.turnId}</dd>
           </>
         )}
         {event.metadata.callId && (

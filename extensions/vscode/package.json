@@ -2,7 +2,7 @@
   "name": "hacktrail",
   "displayName": "HackTrail",
   "description": "Local project time tracking from editor activity, with an automatic idle cutoff.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "swamstick911",
   "license": "AGPL-3.0-only",
   "repository": {
@@ -46,6 +46,14 @@
       {
         "command": "hacktrail.disableClaude",
         "title": "HackTrail: Disable Claude Tracking"
+      },
+      {
+        "command": "hacktrail.disableCodex",
+        "title": "HackTrail: Disable Codex Tracking"
+      },
+      {
+        "command": "hacktrail.disableGit",
+        "title": "HackTrail: Disable Git Collection"
       }
     ]
   }

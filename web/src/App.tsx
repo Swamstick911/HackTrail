@@ -273,7 +273,7 @@ export function App() {
           <div className="collector-status">
             <span className={'status-dot ' + (connected ? 'online' : '')} />
             {connected ? 'Collector online' : 'Collector offline'}
-            <span>v0.3</span>
+            <span>v0.4</span>
           </div>
         </div>
       </aside>

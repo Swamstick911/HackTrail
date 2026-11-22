@@ -3,10 +3,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { ActivityClock, type ActivityInterval } from '../../../src/shared/activity-clock.js';
 import { CollectorError, LocalClient } from '../../../src/shared/local-client.js';
 import type { TimeSample } from '../../../src/shared/tracking.js';
-import type { Project } from '../../../src/shared/events.js';
+import type { ActivityEvent, GitContext, Project } from '../../../src/shared/events.js';
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { connectClaude } from '../../../src/integrations/claude.js';
+import { connectCodex } from '../../../src/integrations/codex.js';
+import { observeGit } from '../../../src/integrations/git.js';
 import { CollectorManager, defaultCollectorUrl } from './collector.js';
 
 interface Connection {
@@ -26,6 +28,13 @@ export function activate(context: vscode.ExtensionContext) {
   let connection = context.workspaceState.get<Connection>('connection');
   let enabled = context.workspaceState.get('enabled', false);
   let queue = context.workspaceState.get<TimeSample[]>('queue', []);
+  let evidence = context.workspaceState.get<{
+    events: ActivityEvent[];
+    previous?: { projectId: string; git: GitContext };
+  }>('evidence', { events: [] });
+  let gitContext: GitContext | undefined;
+  let pollingGit = false;
+  let lastGitPoll = 0;
   let clientId = context.workspaceState.get<string>('clientId');
   if (!clientId) {
     clientId = randomUUID();
@@ -58,6 +67,7 @@ export function activate(context: vscode.ExtensionContext) {
       startedAt: new Date(interval.start).toISOString(),
       endedAt: new Date(interval.end).toISOString(),
       signal: interval.signal,
+      git: gitContext,
     });
     persist();
   }
@@ -67,8 +77,12 @@ export function activate(context: vscode.ExtensionContext) {
       .filter((sample) => Date.parse(sample.startedAt) >= Date.now() - 7 * 86_400_000)
       .slice(-5000);
     const snapshot = [...queue];
+    const savedEvidence = { ...evidence, events: [...evidence.events] };
     storageWrites = storageWrites
-      .then(() => context.workspaceState.update('queue', snapshot))
+      .then(async () => {
+        await context.workspaceState.update('queue', snapshot);
+        await context.workspaceState.update('evidence', savedEvidence);
+      })
       .catch(() => {
         status.tooltip = 'HackTrail could not save its offline queue.';
       });
@@ -112,7 +126,11 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       await storageWrites;
       const projectIds = [
-        ...new Set([selected.projectId, ...queue.map((sample) => sample.projectId)]),
+        ...new Set([
+          selected.projectId,
+          ...queue.map((sample) => sample.projectId),
+          ...evidence.events.map((event) => event.projectId),
+        ]),
       ];
       for (const projectId of projectIds) {
         const samples = queue.filter((sample) => sample.projectId === projectId).slice(0, 500);
@@ -133,6 +151,8 @@ export function activate(context: vscode.ExtensionContext) {
           .catch(async (error) => {
             if (!(error instanceof CollectorError) || error.status !== 404) throw error;
             queue = queue.filter((sample) => sample.projectId !== projectId);
+            evidence.events = evidence.events.filter((event) => event.projectId !== projectId);
+            gitContext = undefined;
             persist();
             if (connection?.projectId === projectId) {
               enabled = false;
@@ -152,6 +172,16 @@ export function activate(context: vscode.ExtensionContext) {
         const sent = new Set(samples.map((sample) => sample.id));
         queue = queue.filter((sample) => !sent.has(sample.id));
         persist();
+        const events = evidence.events
+          .filter((event) => event.projectId === projectId)
+          .slice(0, 500);
+        if (events.length) {
+          await storageWrites;
+          await requestClient.request('/events', { events });
+          const ids = new Set(events.map((event) => event.id));
+          evidence.events = evidence.events.filter((event) => !ids.has(event.id));
+          persist();
+        }
       }
       online = true;
     } catch {
@@ -185,7 +215,7 @@ export function activate(context: vscode.ExtensionContext) {
         {
           modal: true,
           detail:
-            'HackTrail starts a local collector and records editor activity timestamps. Including Claude adds local hooks for tool names, outcomes, and agent runtime. No code, prompt text, tool arguments, or output is collected. Setup may download a runtime from nodejs.org once.',
+            'HackTrail starts a local collector and records editor activity timestamps. Full tracking adds Claude and Codex hooks for tool names, outcomes, and agent runtime, plus Git commit IDs, branch names, and change counts. Codex will ask you to trust its hooks via /hooks. No code, prompt text, tool arguments, or output is collected. Setup may download a runtime from nodejs.org once.',
         },
         'Enable tracking',
         'Editor only',
@@ -193,6 +223,7 @@ export function activate(context: vscode.ExtensionContext) {
       await context.workspaceState.update('setupSeen', true);
       if (!choice) return;
       let claudeReady = false;
+      let codexReady = false;
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: 'Setting up HackTrail' },
         async (progress) => {
@@ -213,6 +244,7 @@ export function activate(context: vscode.ExtensionContext) {
           });
           remember(clock.focus(Date.now(), false));
           await flush();
+          gitContext = undefined;
           connection = {
             projectId: project.id,
             projectName: project.name,
@@ -225,10 +257,13 @@ export function activate(context: vscode.ExtensionContext) {
           clock = new ActivityClock(Date.now());
           await context.workspaceState.update('connection', connection);
           await context.workspaceState.update('enabled', true);
+          await context.workspaceState.update('evidenceSetupSeen', true);
+          await context.workspaceState.update('gitEnabled', choice === 'Enable tracking');
           await context.workspaceState.update('claudeEnabled', choice === 'Enable tracking');
+          await context.workspaceState.update('codexEnabled', choice === 'Enable tracking');
           if (choice === 'Enable tracking') {
             try {
-              await installClaude(report);
+              await installAgent('claude', report);
               claudeReady = true;
             } catch (error) {
               void vscode.window.showWarningMessage(
@@ -237,8 +272,20 @@ export function activate(context: vscode.ExtensionContext) {
                   ' Run HackTrail: Enable Tracking to retry.',
               );
             }
+            try {
+              await installAgent('codex', report);
+              codexReady = true;
+            } catch (error) {
+              void vscode.window.showWarningMessage(
+                'Editor tracking is ready, but Codex setup needs attention: ' +
+                  message(error) +
+                  ' Run HackTrail: Enable Tracking to retry.',
+              );
+            }
+            await pollGit();
           } else {
-            await removeClaude();
+            await removeAgent('claude');
+            await removeAgent('codex');
           }
           setFocus();
           await flush();
@@ -248,9 +295,11 @@ export function activate(context: vscode.ExtensionContext) {
         },
       );
       void vscode.window.showInformationMessage(
-        claudeReady
-          ? 'HackTrail is ready. New Claude sessions will load the local hooks; restart an existing session once.'
-          : 'HackTrail is ready. Editor activity stays on this computer.',
+        codexReady
+          ? 'HackTrail is ready. In Codex, open /hooks to review and trust the new hooks. Restart an existing Claude session once.'
+          : claudeReady
+            ? 'HackTrail is ready. New Claude sessions will load the local hooks; restart an existing session once.'
+            : 'HackTrail is ready. Editor activity stays on this computer.',
       );
     } catch (error) {
       void vscode.window.showErrorMessage(message(error));
@@ -263,39 +312,82 @@ export function activate(context: vscode.ExtensionContext) {
     return error instanceof Error ? error.message : 'Could not set up HackTrail.';
   }
 
-  async function installClaude(report: (message: string) => void = () => {}) {
+  async function installAgent(
+    adapter: 'claude' | 'codex',
+    report: (message: string) => void = () => {},
+  ) {
     if (!connection?.workspacePath) return;
-    await connectClaude({
+    await (adapter === 'claude' ? connectClaude : connectCodex)({
       workspace: connection.workspacePath,
       projectId: connection.projectId,
       url: connection.url,
-      bundlePath: join(context.extensionPath, 'dist', 'claude-hook.mjs'),
+      bundlePath: join(context.extensionPath, 'dist', adapter + '-hook.mjs'),
       runtimePath: await collector.runtime(report),
     });
   }
 
-  async function removeClaude() {
+  async function removeAgent(adapter: 'claude' | 'codex') {
     if (!connection?.workspacePath) return;
-    await connectClaude({
+    await (adapter === 'claude' ? connectClaude : connectCodex)({
       workspace: connection.workspacePath,
       url: connection.url,
       remove: true,
-      bundlePath: join(context.extensionPath, 'dist', 'claude-hook.mjs'),
+      bundlePath: join(context.extensionPath, 'dist', adapter + '-hook.mjs'),
     });
-    await context.workspaceState.update('claudeEnabled', false);
+    await context.workspaceState.update(adapter + 'Enabled', false);
+  }
+
+  async function pollGit() {
+    if (
+      pollingGit ||
+      !connection?.workspacePath ||
+      !context.workspaceState.get('gitEnabled', false)
+    )
+      return;
+    pollingGit = true;
+    lastGitPoll = Date.now();
+    const selected = connection;
+    try {
+      const previous =
+        evidence.previous?.projectId === selected.projectId ? evidence.previous.git : undefined;
+      const observed = await observeGit(selected.workspacePath!, selected.projectId, previous);
+      if (connection !== selected || !context.workspaceState.get('gitEnabled', false)) return;
+      remember(clock.tick(Date.now()));
+      gitContext = observed?.context;
+      if (!observed) return;
+      if (observed.event) {
+        if (evidence.events.length >= 5000) {
+          void vscode.window.showWarningMessage(
+            'HackTrail Git queue is full. Open the dashboard to reconnect the collector.',
+          );
+          return;
+        }
+        evidence.events.push(observed.event);
+      }
+      evidence.previous = { projectId: selected.projectId, git: observed.context };
+      persist();
+    } finally {
+      pollingGit = false;
+    }
   }
 
   async function restoreCollector() {
     if (
       !connection ||
-      (!enabled && !context.workspaceState.get('claudeEnabled', false)) ||
+      (!enabled &&
+        !context.workspaceState.get('claudeEnabled', false) &&
+        !context.workspaceState.get('codexEnabled', false) &&
+        !context.workspaceState.get('gitEnabled', false)) ||
       settingUp
     )
       return;
     lastRestartAttempt = Date.now();
     try {
       await collector.ensure(connection.url);
-      if (context.workspaceState.get('claudeEnabled', false)) await installClaude();
+      for (const adapter of ['claude', 'codex'] as const) {
+        if (context.workspaceState.get(adapter + 'Enabled', false)) await installAgent(adapter);
+      }
+      await pollGit();
       await flush();
     } catch (error) {
       online = false;
@@ -305,15 +397,28 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('hacktrail.connect', () => setup()),
-    vscode.commands.registerCommand('hacktrail.disableClaude', async () => {
-      try {
-        await removeClaude();
-        void vscode.window.showInformationMessage(
-          'HackTrail Claude hooks removed. Restart existing Claude sessions to apply this.',
-        );
-      } catch (error) {
-        void vscode.window.showErrorMessage(message(error));
-      }
+    ...(['claude', 'codex'] as const).map((adapter) =>
+      vscode.commands.registerCommand(
+        adapter === 'claude' ? 'hacktrail.disableClaude' : 'hacktrail.disableCodex',
+        async () => {
+          try {
+            await removeAgent(adapter);
+            void vscode.window.showInformationMessage(
+              'HackTrail ' + adapter + ' hooks removed. Restart the agent session to apply this.',
+            );
+          } catch (error) {
+            void vscode.window.showErrorMessage(message(error));
+          }
+        },
+      ),
+    ),
+    vscode.commands.registerCommand('hacktrail.disableGit', async () => {
+      remember(clock.tick(Date.now()));
+      gitContext = undefined;
+      await context.workspaceState.update('gitEnabled', false);
+      void vscode.window.showInformationMessage(
+        'HackTrail Git collection is off. Existing checkpoints remain in your local record.',
+      );
     }),
     vscode.window.registerUriHandler({
       handleUri: async (uri) => {
@@ -380,6 +485,7 @@ export function activate(context: vscode.ExtensionContext) {
   const timer = setInterval(() => {
     remember(clock.tick(Date.now()));
     void flush();
+    if (Date.now() - lastGitPoll >= 30_000) void pollGit();
     if (!online && Date.now() - lastRestartAttempt > 60_000) void restoreCollector();
     render();
   }, 15_000);
@@ -395,6 +501,17 @@ export function activate(context: vscode.ExtensionContext) {
   void flush();
   if (connection?.workspacePath) void restoreCollector();
   welcomeTimer = setTimeout(() => {
+    if (connection && !settingUp && !context.workspaceState.get('evidenceSetupSeen', false)) {
+      void context.workspaceState.update('evidenceSetupSeen', true);
+      void vscode.window
+        .showInformationMessage(
+          'HackTrail can now add Git checkpoints and Codex activity. Review the new collection options to enable them.',
+          'Review setup',
+        )
+        .then((choice) => {
+          if (choice === 'Review setup') void setup();
+        });
+    }
     if (
       !connection &&
       !settingUp &&

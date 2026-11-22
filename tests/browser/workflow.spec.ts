@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connectClaude } from '../../src/cli/connect-claude.js';
+import { connectCodex } from '../../src/integrations/codex.js';
 
 test.beforeEach(async ({ request }) => {
   const session = await request.get('/api/session');
@@ -18,93 +19,119 @@ test.beforeEach(async ({ request }) => {
   }
 });
 
-test('Claude setup preserves hooks, delivers live events, retries offline, and disconnects', async ({
-  request,
-}) => {
-  const { token } = await (await request.get('/api/session')).json();
-  const headers = { Authorization: 'Bearer ' + token };
-  const project = await (
-    await request.post('/api/projects', { headers, data: { name: 'Claude integration test' } })
-  ).json();
-  const workspace = mkdtempSync(join(tmpdir(), 'hacktrail-hooks-'));
-  const options = {
-    workspace,
-    projectId: project.id,
-    url: 'http://127.0.0.1:47655',
-    bundlePath: resolve('dist/cli/claude-hook.mjs'),
-  };
-  try {
-    mkdirSync(join(workspace, '.claude'));
-    const settingsPath = join(workspace, '.claude/settings.local.json');
-    writeFileSync(
-      settingsPath,
-      JSON.stringify({
-        env: { KEEP: 'value' },
-        hooks: {
-          PreToolUse: [
-            { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo existing-hook' }] },
-          ],
-        },
-      }),
-    );
-    await connectClaude(options);
-    await connectClaude(options);
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    expect(settings.env.KEEP).toBe('value');
-    expect(settings.hooks.PreToolUse).toHaveLength(2);
-    function run(hook: string) {
-      execFileSync(process.execPath, [join(workspace, '.hacktrail/claude-hook.mjs')], {
-        input: JSON.stringify({
-          hook_event_name: hook,
-          session_id: 'live-test-session',
-          tool_name: 'Bash',
-          tool_use_id: 'live-tool',
-          prompt: 'PRIVATE_PROMPT',
-          tool_input: { command: 'PRIVATE_COMMAND' },
-          tool_response: 'PRIVATE_OUTPUT',
-        }),
-        timeout: 5000,
-      });
-    }
-    run('UserPromptSubmit');
-    run('PreToolUse');
-    run('PostToolUseFailure');
-    run('Stop');
-    const exported = await (
-      await request.get('/api/projects/' + project.id + '/export', { headers })
-    ).json();
-    expect(exported.events).toHaveLength(5);
-    expect(JSON.stringify(exported)).not.toContain('PRIVATE_');
-    expect(
-      exported.events.find((event: { kind: string }) => event.kind === 'tool_result').metadata
-        .success,
-    ).toBe(false);
-    const connectionPath = join(workspace, '.hacktrail/connection.json');
-    writeFileSync(
-      connectionPath,
-      JSON.stringify({ projectId: project.id, url: 'http://127.0.0.1:1' }),
-    );
-    run('UserPromptSubmit');
-    expect(readdirSync(join(workspace, '.hacktrail/hook-queue'))).toHaveLength(1);
-    writeFileSync(connectionPath, JSON.stringify({ projectId: project.id, url: options.url }));
-    run('Stop');
-    expect(readdirSync(join(workspace, '.hacktrail/hook-queue'))).toHaveLength(0);
-    const latest = await (
-      await request.get('/api/projects/' + project.id + '/export', { headers })
-    ).json();
-    expect(latest.events).toHaveLength(8);
-    await connectClaude({ ...options, remove: true });
-    const removed = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    expect(removed.env.KEEP).toBe('value');
-    expect(removed.hooks.PreToolUse).toHaveLength(1);
-    expect(removed.hooks.PreToolUse[0].hooks[0].command).toBe('echo existing-hook');
-    const download = await request.get('/api/integrations/vscode', { headers });
-    expect(download.ok()).toBe(true);
-    expect((await download.body()).subarray(0, 2).toString()).toBe('PK');
-  } finally {
-    rmSync(workspace, { recursive: true, force: true });
-  }
-});
+for (const adapter of ['claude', 'codex'] as const) {
+  const connect = adapter === 'claude' ? connectClaude : connectCodex;
+  test(
+    adapter + ' setup preserves hooks, delivers live events, retries offline, and disconnects',
+    async ({ request }) => {
+      const { token } = await (await request.get('/api/session')).json();
+      const headers = { Authorization: 'Bearer ' + token };
+      const project = await (
+        await request.post('/api/projects', { headers, data: { name: 'Claude integration test' } })
+      ).json();
+      const workspace = mkdtempSync(join(tmpdir(), 'hacktrail-hooks-'));
+      const options = {
+        workspace,
+        projectId: project.id,
+        url: 'http://127.0.0.1:47655',
+        bundlePath: resolve('dist/cli/' + adapter + '-hook.mjs'),
+      };
+      try {
+        mkdirSync(join(workspace, '.' + adapter));
+        const settingsPath = join(
+          workspace,
+          adapter === 'claude' ? '.claude/settings.local.json' : '.codex/hooks.json',
+        );
+        writeFileSync(
+          settingsPath,
+          JSON.stringify({
+            env: { KEEP: 'value' },
+            hooks: {
+              PreToolUse: [
+                { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo existing-hook' }] },
+              ],
+            },
+          }),
+        );
+        await connect(options);
+        await connect(options);
+        const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+        expect(settings.env.KEEP).toBe('value');
+        expect(settings.hooks.PreToolUse).toHaveLength(2);
+        function run(hook: string) {
+          execFileSync(process.execPath, [join(workspace, '.hacktrail', adapter + '-hook.mjs')], {
+            input: JSON.stringify({
+              hook_event_name: hook,
+              session_id: 'live-test-session',
+              tool_name: 'Bash',
+              tool_use_id: 'live-tool',
+              prompt: 'PRIVATE_PROMPT',
+              tool_input: { command: 'PRIVATE_COMMAND' },
+              tool_response: { exit_code: 1, output: 'PRIVATE_OUTPUT' },
+            }),
+            timeout: 5000,
+          });
+        }
+        run('UserPromptSubmit');
+        run('PreToolUse');
+        run(adapter === 'claude' ? 'PostToolUseFailure' : 'PostToolUse');
+        run('Stop');
+        const exported = await (
+          await request.get('/api/projects/' + project.id + '/export', { headers })
+        ).json();
+        expect(exported.events).toHaveLength(5);
+        expect(JSON.stringify(exported)).not.toContain('PRIVATE_');
+        expect(
+          exported.events.find((event: { kind: string }) => event.kind === 'tool_result').metadata
+            .success,
+        ).toBe(false);
+        const connectionPath = join(
+          workspace,
+          '.hacktrail',
+          adapter === 'claude' ? 'connection.json' : 'codex-connection.json',
+        );
+        writeFileSync(
+          connectionPath,
+          JSON.stringify({ projectId: project.id, url: 'http://127.0.0.1:1' }),
+        );
+        run('UserPromptSubmit');
+        expect(
+          readdirSync(
+            join(workspace, '.hacktrail', adapter === 'claude' ? 'hook-queue' : 'codex-hook-queue'),
+          ),
+        ).toHaveLength(1);
+        writeFileSync(connectionPath, JSON.stringify({ projectId: project.id, url: options.url }));
+        run('Stop');
+        expect(
+          readdirSync(
+            join(workspace, '.hacktrail', adapter === 'claude' ? 'hook-queue' : 'codex-hook-queue'),
+          ),
+        ).toHaveLength(0);
+        const latest = await (
+          await request.get('/api/projects/' + project.id + '/export', { headers })
+        ).json();
+        expect(latest.events).toHaveLength(8);
+        if (adapter === 'codex') {
+          const queue = join(workspace, '.hacktrail/codex-hook-queue');
+          for (let index = 0; index < 5000; index++)
+            writeFileSync(join(queue, index + '.json'), JSON.stringify([latest.events[0]]));
+          run('Stop');
+          expect(readdirSync(queue)).toHaveLength(4900);
+        }
+        await connect({ ...options, remove: true });
+        const removed = JSON.parse(readFileSync(settingsPath, 'utf8'));
+        expect(removed.env.KEEP).toBe('value');
+        expect(removed.hooks.PreToolUse).toHaveLength(1);
+        expect(removed.hooks.PreToolUse[0].hooks[0].command).toBe('echo existing-hook');
+        const download = await request.get('/api/integrations/vscode', { headers });
+        expect(download.ok()).toBe(true);
+        expect((await download.body()).subarray(0, 2).toString()).toBe('PK');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    },
+  );
+}
 
 test('example timeline is labeled, inspectable, and responsive', async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
@@ -275,4 +302,101 @@ test('live editor time, pause controls, notes, and review update without reload'
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await page.reload();
   await expect(page.getByTestId('today-time')).toHaveText('45s');
+});
+
+test('Git-linked sessions and agent overlap remain inspectable on desktop and mobile', async ({
+  page,
+  request,
+}, testInfo) => {
+  const { token } = await (await request.get('/api/session')).json();
+  const headers = { Authorization: 'Bearer ' + token };
+  const project = await (
+    await request.post('/api/projects', { headers, data: { name: 'Evidence workflow' } })
+  ).json();
+  const now = Date.now() - 120_000;
+  const at = (offset: number) => new Date(now + offset).toISOString();
+  const git = {
+    repositoryId: 'a'.repeat(64),
+    commit: 'b'.repeat(40),
+    branch: 'feature/session-context',
+  };
+  const heartbeat = await request.post('/api/tracking/heartbeat', {
+    headers,
+    data: {
+      projectId: project.id,
+      clientId: 'evidence-editor',
+      label: 'VS Code',
+      state: 'active',
+      samples: [
+        {
+          id: 'evidence-sample',
+          projectId: project.id,
+          startedAt: at(-30_000),
+          endedAt: at(0),
+          signal: 'keyboard',
+          git,
+        },
+      ],
+    },
+  });
+  expect(heartbeat.ok()).toBe(true);
+  const events = [
+    {
+      id: 'evidence-start',
+      kind: 'agent_started',
+      source: 'codex',
+      actor: 'agent',
+      occurredAt: at(-60_000),
+      metadata: { sessionId: 'session-one', turnId: 'turn-one', hook: 'UserPromptSubmit' },
+    },
+    {
+      id: 'evidence-stop',
+      kind: 'agent_stopped',
+      source: 'codex',
+      actor: 'agent',
+      occurredAt: at(0),
+      metadata: { sessionId: 'session-one', turnId: 'turn-one', hook: 'Stop' },
+    },
+    {
+      id: 'evidence-git',
+      kind: 'git_checkpoint',
+      source: 'git',
+      actor: 'unknown',
+      occurredAt: at(-30_000),
+      metadata: {
+        git,
+        checkpointReason: 'head-changed',
+        filesChanged: 2,
+        linesAdded: 4,
+        linesDeleted: 1,
+      },
+    },
+  ].map((event) => ({ ...event, schemaVersion: 1, projectId: project.id }));
+  expect((await request.post('/api/events', { headers, data: { events } })).ok()).toBe(true);
+  await page.clock.setFixedTime(new Date(now));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Evidence workflow', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Recent Git checkpoints' })).toBeVisible();
+  await page.locator('.session-row summary').click();
+  await expect(page.locator('.session-git')).toContainText('bbbbbbbbbb');
+  await expect(page.locator('.checkpoint-list')).toContainText('2 changed files');
+  await page.screenshot({ path: testInfo.outputPath('evidence-today.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await expect(page.getByTestId('agent-overlap')).toHaveText('30s');
+  await expect(page.getByTestId('agent-without-editor')).toHaveText('30s');
+  await page.screenshot({ path: testInfo.outputPath('evidence-review.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('evidence-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
+  await page.getByRole('button', { name: 'Inspect Git checkpoint' }).click();
+  await expect(page.getByRole('complementary', { name: 'Event details' })).toContainText(
+    git.commit,
+  );
+  const exported = await (
+    await request.get('/api/projects/' + project.id + '/export', { headers })
+  ).json();
+  expect(exported.tracking.samples[0].git).toEqual(git);
+  expect(exported.tracking.totalMs).toBe(30_000);
 });

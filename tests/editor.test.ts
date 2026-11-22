@@ -56,6 +56,14 @@ describe('VS Code adapter with the real time store', () => {
     vi.useRealTimers();
   });
 
+  it('retains existing consent without silently enabling Codex or Git', async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(state.get('enabled')).toBe(true);
+    expect(state.get('gitEnabled')).not.toBe(true);
+    expect(state.get('codexEnabled')).not.toBe(true);
+    expect(state.get('evidenceSetupSeen')).toBe(true);
+  });
+
   it('ignores command-driven selection changes and focus-only activity', async () => {
     emit('selection', { kind: 3, textEditor: window.activeTextEditor });
     await vi.advanceTimersByTimeAsync(15_000);

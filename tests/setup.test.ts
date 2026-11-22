@@ -9,12 +9,20 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import type { ExtensionContext } from 'vscode';
 import { activate } from '../extensions/vscode/src/extension.js';
 import { ActivityStore } from '../src/server/store.js';
 import { createApp } from '../src/server/app.js';
-import { commandsByName, openEditorUri, resetEditor, window, workspace } from './vscode-stub.js';
+import {
+  commandsByName,
+  emit,
+  openEditorUri,
+  resetEditor,
+  window,
+  workspace,
+} from './vscode-stub.js';
 import { verifyDownload } from '../extensions/vscode/src/runtime.js';
 
 const { ensure, runtime } = vi.hoisted(() => ({ ensure: vi.fn(), runtime: vi.fn() }));
@@ -40,6 +48,7 @@ describe('automatic workspace setup', () => {
     directory = mkdtempSync(join(tmpdir(), 'hacktrail-setup-'));
     mkdirSync(join(directory, 'dist'));
     writeFileSync(join(directory, 'dist', 'claude-hook.mjs'), 'export {};');
+    writeFileSync(join(directory, 'dist', 'codex-hook.mjs'), 'export {};');
     workspace.workspaceFolders = [
       {
         name: 'My project',
@@ -115,6 +124,11 @@ describe('automatic workspace setup', () => {
     expect(ensure).toHaveBeenCalledOnce();
     expect(state.get('enabled')).toBe(true);
     expect(state.get('claudeEnabled')).toBe(true);
+    expect(state.get('codexEnabled')).toBe(true);
+    expect(state.get('gitEnabled')).toBe(true);
+    const codexPath = join(directory, '.codex/hooks.json');
+    const codex = readFileSync(codexPath, 'utf8');
+    expect(JSON.parse(codex).hooks.Interrupt).toHaveLength(1);
     expect(store.listProjects()).toHaveLength(1);
     const first = readFileSync(path, 'utf8');
     const settings = JSON.parse(first);
@@ -126,6 +140,7 @@ describe('automatic workspace setup', () => {
     await commandsByName.get('hacktrail.connect')!();
     expect(store.listProjects()).toHaveLength(1);
     expect(readFileSync(path, 'utf8')).toBe(first);
+    expect(readFileSync(codexPath, 'utf8')).toBe(codex);
     expect(
       readdirSync(join(directory, '.hacktrail')).filter((name) =>
         name.startsWith('claude-settings-backup-'),
@@ -134,6 +149,9 @@ describe('automatic workspace setup', () => {
     await commandsByName.get('hacktrail.disableClaude')!();
     expect(JSON.parse(readFileSync(path, 'utf8')).hooks.Stop).toHaveLength(1);
     expect(state.get('claudeEnabled')).toBe(false);
+    await commandsByName.get('hacktrail.disableCodex')!();
+    expect(JSON.parse(readFileSync(codexPath, 'utf8')).hooks).toEqual({});
+    expect(state.get('codexEnabled')).toBe(false);
   });
 
   it('supports editor-only consent without creating Claude settings', async () => {
@@ -142,7 +160,64 @@ describe('automatic workspace setup', () => {
     expect(state.get('enabled')).toBe(true);
     expect(state.get('claudeEnabled')).toBe(false);
     expect(existsSync(join(directory, '.claude'))).toBe(false);
+    expect(existsSync(join(directory, '.codex'))).toBe(false);
+    expect(state.get('gitEnabled')).toBe(false);
+    expect(state.get('codexEnabled')).toBe(false);
     expect(runtime).not.toHaveBeenCalled();
+  });
+
+  it('links Git context to editor samples and stops attaching it when disabled', async () => {
+    const git = (...args: string[]) =>
+      execFileSync('git', [
+        '-C',
+        directory,
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ]);
+    git('init', '-b', 'main');
+    writeFileSync(join(directory, 'project.txt'), 'fixture');
+    git('add', 'project.txt');
+    git('commit', '-m', 'fixture');
+    vi.spyOn(window, 'showInformationMessage').mockResolvedValue('Enable tracking');
+    vi.spyOn(workspace, 'getWorkspaceFolder').mockReturnValue(workspace.workspaceFolders[0]!);
+    await commandsByName.get('hacktrail.connect')!();
+    const project = store.listProjects()[0]!;
+    expect(store.exportProject(project.id).events[0]).toMatchObject({
+      kind: 'git_checkpoint',
+      metadata: { git: { branch: 'main' } },
+    });
+    const started = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(started);
+    try {
+      emit('selection', { kind: 1, textEditor: window.activeTextEditor });
+      clock.mockReturnValue(started + 15_000);
+      await commandsByName.get('hacktrail.toggleTracking')!();
+      expect(store.tracking.export(project.id).samples[0].git.branch).toBe('main');
+      await commandsByName.get('hacktrail.disableGit')!();
+      await commandsByName.get('hacktrail.toggleTracking')!();
+      emit('selection', { kind: 1, textEditor: window.activeTextEditor });
+      clock.mockReturnValue(started + 30_000);
+      await commandsByName.get('hacktrail.toggleTracking')!();
+      expect(store.tracking.export(project.id).samples.at(-1).git).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('preserves invalid Codex settings and allows editor tracking to continue', async () => {
+    mkdirSync(join(directory, '.codex'));
+    writeFileSync(join(directory, '.codex/hooks.json'), '{broken');
+    vi.spyOn(window, 'showInformationMessage').mockResolvedValue('Enable tracking');
+    const warning = vi.spyOn(window, 'showWarningMessage');
+    await commandsByName.get('hacktrail.connect')!();
+    expect(state.get('enabled')).toBe(true);
+    expect(readFileSync(join(directory, '.codex/hooks.json'), 'utf8')).toBe('{broken');
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('Codex setup needs attention'));
   });
 
   it('links a dashboard project instead of creating another during first-run setup', async () => {

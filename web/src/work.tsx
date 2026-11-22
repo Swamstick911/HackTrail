@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { TrackingReport, TimeSlice } from '../../src/shared/tracking.js';
 import { durationLabel } from '../../src/shared/tracking.js';
+import type { GitContext } from '../../src/shared/events.js';
 import type { ActivityReview } from '../../src/shared/review.js';
 import { Icon } from './icons.js';
 import { api, errorMessage } from './api.js';
@@ -173,7 +174,9 @@ export function TodayView({
                     </summary>
                     <div className="session-details">
                       <p>
-                        {session.samples.length} activity samples. Gaps are excluded from the total.
+                        {session.samples.length} activity{' '}
+                        {session.samples.length === 1 ? 'sample' : 'samples'}. Gaps are excluded
+                        from the total.
                       </p>
                       <dl>
                         <dt>Started</dt>
@@ -183,6 +186,7 @@ export function TodayView({
                         <dt>Counting rule</dt>
                         <dd>Editor input, 2 minute idle cutoff</dd>
                       </dl>
+                      <SessionGit samples={session.samples} />
                       <p className="small muted">
                         Sample references are included in your project export.
                       </p>
@@ -204,6 +208,7 @@ export function TodayView({
               </div>
             )}
           </section>
+          <GitCheckpoints checkpoints={data.review.checkpoints} />
           <Notes projectId={projectId} notes={data.review.notes} onUpdated={onUpdated} />
         </div>
         <aside className="work-aside">
@@ -232,19 +237,26 @@ export function TodayView({
               </div>
               {connected && <Icon name="check" className="connected-check" />}
             </div>
-            <div className="tool-row">
-              <span className="tool-symbol claude">
-                <Icon name="activity" />
-              </span>
-              <div>
-                <strong>Claude Code</strong>
-                <span>
-                  {data.review.lastHookAt
-                    ? 'Last event ' + clockLabel(data.review.lastHookAt)
-                    : 'No events yet'}
+            {(
+              [
+                ['claude-code', 'Claude Code'],
+                ['codex', 'Codex'],
+              ] as const
+            ).map(([source, name]) => (
+              <div className="tool-row" key={source}>
+                <span className="tool-symbol claude">
+                  <Icon name="activity" />
                 </span>
+                <div>
+                  <strong>{name}</strong>
+                  <span>
+                    {data.review.lastHookBySource[source]
+                      ? 'Last event ' + clockLabel(data.review.lastHookBySource[source])
+                      : 'No events this week'}
+                  </span>
+                </div>
               </div>
-            </div>
+            ))}
             <button className="full-width" onClick={onConnect}>
               Manage connections
             </button>
@@ -256,9 +268,12 @@ export function TodayView({
             <h3>Agent work has its own clock.</h3>
             <p>
               <strong>{durationLabel(data.review.agentMs)}</strong> recorded this week across{' '}
-              {data.review.closedRuns} completed runs.
+              {data.review.closedRuns} paired {data.review.closedRuns === 1 ? 'run' : 'runs'}.
             </p>
-            <p className="small muted">This is kept separate from your editor time.</p>
+            <p className="small muted">
+              {durationLabel(data.review.overlapMs)} overlapped with editor activity. Neither clock
+              proves productive struggle.
+            </p>
           </section>
           <p className="local-note">
             <Icon name="shield" width="16" height="16" />
@@ -267,6 +282,99 @@ export function TodayView({
         </aside>
       </div>
     </>
+  );
+}
+
+function GitReference({ git }: { git: GitContext }) {
+  return (
+    <span className="git-reference">
+      <code title={git.commit}>{git.commit.slice(0, 10)}</code>
+      <span>{git.branch ?? 'Detached HEAD'}</span>
+    </span>
+  );
+}
+
+function SessionGit({ samples }: { samples: TimeSlice[] }) {
+  const contexts = new Map<string, GitContext>();
+  for (const sample of samples)
+    if (sample.git) contexts.set(JSON.stringify(sample.git), sample.git);
+  return (
+    <div className="session-git">
+      <strong>Git context observed</strong>
+      {contexts.size ? (
+        [...contexts].map(([key, git]) => <GitReference key={key} git={git} />)
+      ) : (
+        <p className="small muted">No Git context was collected for these samples.</p>
+      )}
+    </div>
+  );
+}
+
+function GitCheckpoints({ checkpoints }: { checkpoints: ActivityReview['checkpoints'] }) {
+  return (
+    <section className="panel checkpoints-panel">
+      <div className="panel-heading">
+        <h2>Recent Git checkpoints</h2>
+        <Icon name="code" />
+      </div>
+      <p className="muted">
+        Find the version you left off on. These are observed repository states, not hours worked.
+      </p>
+      {checkpoints.length ? (
+        <ul className="checkpoint-list">
+          {checkpoints.slice(0, 5).map((event) => (
+            <li key={event.id}>
+              {event.metadata.git && <GitReference git={event.metadata.git} />}
+              <time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString()}</time>
+              <p className="small muted">
+                {event.metadata.checkpointReason === 'connected'
+                  ? 'First observation of this branch.'
+                  : event.metadata.checkpointReason === 'history-changed'
+                    ? 'History changed or could not be compared.'
+                    : 'HEAD moved forward since the last observation.'}
+              </p>
+              {event.metadata.filesChanged !== undefined && (
+                <span className="small">
+                  {event.metadata.filesChanged} changed files, +{event.metadata.linesAdded} / -
+                  {event.metadata.linesDeleted} text lines between observed commits.
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="small muted">
+          Enable Git collection in VS Code with the repository root open. Checkpoints appear when
+          HEAD or the branch changes.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function TimeBreakdown({ review }: { review: ActivityReview }) {
+  return (
+    <section className="review-section">
+      <h3>Where the clocks overlap</h3>
+      <dl className="time-breakdown">
+        <div>
+          <dt>Editor activity without a recorded agent run</dt>
+          <dd>{durationLabel(review.editorWithoutAgentMs)}</dd>
+        </div>
+        <div>
+          <dt>Editor activity during an agent run</dt>
+          <dd data-testid="agent-overlap">{durationLabel(review.overlapMs)}</dd>
+        </div>
+        <div>
+          <dt>Agent runtime without editor signals</dt>
+          <dd data-testid="agent-without-editor">{durationLabel(review.agentWithoutEditorMs)}</dd>
+        </div>
+      </dl>
+      <p className="small muted">
+        The overlap is already included in both clocks above. No editor signal does not mean you
+        were away, and no recorded agent run does not mean the work was unassisted.
+      </p>
+    </section>
   );
 }
 
@@ -384,11 +492,13 @@ export function ReviewView({
           <strong>{review.eventCount}</strong>
         </div>
       </div>
+      <TimeBreakdown review={review} />
       <section className="review-section">
         <h3>What the record shows</h3>
         <p>
           {review.userMessages} user messages, {review.toolCalls} tool calls, and{' '}
-          {review.closedRuns} completed agent runs.
+          {review.closedRuns} paired agent {review.closedRuns === 1 ? 'run' : 'runs'} (
+          {review.interruptedRuns} interrupted).
         </p>
         <p>
           {review.sources.length
@@ -409,7 +519,7 @@ export function ReviewView({
           <li>
             {review.incompleteRuns
               ? review.incompleteRuns +
-                ' agent runs have no matching finish. Their duration is excluded.'
+                ' agent boundaries could not be paired within 12 hours. Their duration is excluded.'
               : 'Only paired start and finish events contribute to agent runtime.'}
           </li>
           <li>

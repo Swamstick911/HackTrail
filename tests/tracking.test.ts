@@ -154,6 +154,16 @@ describe('Claude live activity', () => {
     });
     expect(JSON.stringify(events)).not.toContain('private');
   });
+  it('does not treat session cleanup after a completed turn as a missing run', () => {
+    const events = ['UserPromptSubmit', 'Stop', 'SessionEnd'].flatMap((hook, index) =>
+      hookEvents(
+        { session_id: 'session-one', hook_event_name: hook },
+        'project-one',
+        new Date(1000 + index * 1000),
+      ),
+    );
+    expect(reviewActivity(events)).toMatchObject({ agentMs: 1000, incompleteRuns: 0 });
+  });
   it('keeps agent duration separate and flags incomplete runs', () => {
     const input = { session_id: 'session-one' };
     const events = [

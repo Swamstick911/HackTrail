@@ -98,8 +98,9 @@ export function createApp(options: AppOptions) {
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'hacktrail',
-    version: '0.3.0',
+    version: '0.4.0',
     setupVersion: 1,
+    evidenceVersion: 1,
   }));
   app.get('/api/session', async () => ({ token: options.token }));
   app.get('/api/projects', async () => options.store.listProjects());
