@@ -1,12 +1,12 @@
 # Live tracking
 
-Version 0.3 makes local setup automatic through the VS Code extension.
+Version 0.4 adds Codex lifecycle events, Git context, and overlapping-clock reports to automatic VS Code setup.
 
 ## Setup and lifecycle
 
-The first trusted workspace prompts for local collection consent. Enabling tracking starts the bundled collector, resolves a project from a hash of the canonical folder path, and installs Claude hooks. Editor-only consent skips Claude. A dashboard link can attach the workspace to an existing project. Untrusted workspaces cannot activate the extension.
+The first trusted workspace prompts for local collection consent. Enabling tracking starts the bundled collector, resolves a project from a hash of the canonical folder path, and installs Claude and Codex hooks, and enables Git observations. Editor-only consent skips all three. Existing installations retain their previous consent until they accept the new setup. A dashboard link can attach the workspace to an existing project. Untrusted workspaces cannot activate the extension.
 
-The collector uses [Node.js SQLite](https://nodejs.org/api/sqlite.html), preserving the existing SQLite tables and files while removing native addon installation. The VSIX includes bundled server code, dashboard assets, and the Claude hook runner. It reuses Node.js 26 or downloads version 26.8.1 from nodejs.org, verifies the platform-specific release digest, extracts the executable and license, and caches them in extension global storage.
+The collector uses [Node.js SQLite](https://nodejs.org/api/sqlite.html), preserving the existing SQLite tables and files while removing native addon installation. The VSIX includes bundled server code, dashboard assets, and both agent hook runners. It reuses Node.js 26 or downloads version 26.8.1 from nodejs.org, verifies the platform-specific release digest, extracts the executable and license, and caches them in extension global storage.
 
 Health checks verify the service and setup protocol before reuse. Separate VS Code windows share the loopback collector; a competing process must bind the same port before it can serve requests. The collector closes after ten minutes without requests when managed by the extension. Manual servers retain their existing lifetime. Hook commands use the resolved runtime path, so they do not depend on Node being in the Claude terminal PATH.
 
@@ -40,13 +40,31 @@ The installer updates project-local settings while retaining unrelated settings 
 
 The hook process extracts only allowed event metadata. It writes a queue entry before attempting delivery, reuses event IDs on retry, and exits without blocking Claude when the collector is unavailable. Queues retry on a subsequent hook; there is no separate background retry daemon.
 
-Agent elapsed time comes from matching start and finish records within the review period. Overlapping completed runs are merged for the total. Unmatched starts and runs over 12 hours are excluded and flagged. A session that crosses the selected review boundary may not have both endpoints in the report. Agent duration can include permission waits and other waiting.
+Agent elapsed time comes from matching start and finish records using source, session ID, and turn ID when provided. A 12-hour lookaround finds paired runs crossing the report boundary; their intervals are clipped to the requested range. Overlapping completed runs are merged for the total. Unmatched boundaries and runs over 12 hours are excluded and flagged. A normal SessionEnd following a recorded Stop does not create an extra incomplete run. Agent duration can include permission waits and other waiting.
+
+## Codex hooks
+
+The adapter uses the [documented Codex lifecycle](https://learn.chatgpt.com/docs/hooks): UserPromptSubmit, PreToolUse, PostToolUse, Stop, and Interrupt. It shares the installer and durable delivery code with Claude but keeps separate configuration and queue files. New or changed hooks in `.codex/hooks.json` must be reviewed and trusted through Codex's `/hooks` interface. HackTrail does not modify Codex's trust records.
+
+The normalizer ignores prompts, tool arguments, tool output text, and assistant messages. It retains source, session and turn identifiers, model, tool name, and call ID. Tool outcomes are recorded only when a structured exit code or error boolean is available. An unknown result stays unknown. Interrupted runs close at the interrupt event, and emit a separate interrupted count in the report.
+
+## Git observations
+
+With explicit consent, the extension polls Git every 30 seconds using bounded, read-only subprocesses. It requires the opened folder to be the repository root, so opening a nested folder cannot silently collect its parent's repository. Git absence, missing HEAD, and failed observations leave samples without current Git context.
+
+The first checkpoint establishes the observed commit and branch. Subsequent HEAD changes compare aggregate file and text-line counts between observations. Checkouts and rewritten history are distinguished from ancestry-preserving advances when Git can establish ancestry. No historical work hours are imported. Branch switches, initial observations, and diff failures may have no change counts.
+
+Samples carry the last successfully observed Git context, so changes between polls are approximate. Absolute paths, code, messages, authors, and remotes are excluded. The repository identity hashes the canonical common Git directory; it identifies a local checkout, not a portable remote repository or a secret. Branch names and commit IDs are retained locally and included in exports.
+
+Git events and the last observation are persisted together in workspace state. Delivery reuses IDs and removes acknowledged events. The Git queue is limited to 5,000 events and stops adding observations with a warning when full. Disabling Git stops new collection; existing queued events can still sync.
 
 ## Review and export
 
 The dashboard uses the browser's local calendar boundaries for its seven-day request. Counted time slices are clipped to the requested range, including at midnight.
 
-Review summaries are deterministic counts and notes, not an LLM assessment. They show tool errors and incomplete agent runs alongside the estimated editor time. The full project export contains events, original time samples, counted slices, and the estimation policy.
+Review summaries are deterministic counts and notes, not an LLM assessment. They show tool errors and incomplete agent runs alongside the estimated editor time. The full project export contains events, original time samples with optional Git context, counted slices, and the editor estimation policy.
+
+Agent and editor intervals are separately merged, then intersected. Review shows editor time without a recorded agent run, their overlap, and agent runtime without editor signals. The overlap is already present in both clocks. No missing signal is treated as proof of absence or misconduct. These measurements have not been validated as productive-struggle hours.
 
 ## Validation
 
@@ -54,6 +72,6 @@ Tests cover idle expiry, focus loss, sleep and clock gaps, offline replay, overl
 
 Setup tests cover consent, editor-only mode, project reuse, hook preservation, failed startup retry, and runtime integrity rejection. A process test copies the bundled collector into a temporary directory without repository dependencies and checks the dashboard, project resolution, and recorded editor time.
 
-Browser checks cover import/export, live updates, notes, pause controls, review, desktop/mobile layouts, VS Code setup links, and VSIX download. The Claude integration check installs hooks into a temporary workspace, executes the actual bundled hook process, tests offline retry, and verifies that unrelated settings survive removal.
+Browser checks cover import/export, live updates, notes, pause controls, review, desktop/mobile layouts, VS Code setup links, and VSIX download. The Claude and Codex integration checks install hooks into temporary workspaces, execute the actual bundled hook process, test offline retry, and verify that unrelated settings survive removal.
 
 These checks do not replace a real VS Code host test, a Windows laptop test, or comparison against consented reference work sessions.

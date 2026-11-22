@@ -117,7 +117,7 @@ Replays require the same sample content and client ID. Overlaps are removed acro
 
 `POST /tracking/pause` accepts `{ "paused": true }` or `false`. Pause intervals persist across restarts and apply to delayed uploads too.
 
-`GET /projects/:id/work?from=...&to=...` requires ISO timestamps for a range of up to 32 days. It returns `tracking` with counted slices, total milliseconds, clients, pause state, and policy; and `review` with event counts, notes, agent elapsed time, and incomplete runs. Clients become disconnected after 45 seconds without a heartbeat.
+`GET /projects/:id/work?from=...&to=...` requires ISO timestamps for a range of up to 32 days. It returns `tracking` with counted slices, total milliseconds, clients, pause state, and policy; and `review` with event counts, notes, recent Git checkpoints, per-source hook timestamps, agent elapsed time, and incomplete or interrupted runs. `editorMs` and `agentMs` are independently merged elapsed intervals; `overlapMs` is their intersection. `editorWithoutAgentMs` and `agentWithoutEditorMs` subtract that intersection from the corresponding clock. None is approved productive-struggle time. Clients become disconnected after 45 seconds without a heartbeat.
 
 Project exports include a `tracking` object containing original samples and counted slices in addition to events. Deletion removes time records and client connections along with the project.
 
@@ -154,3 +154,11 @@ Errors have the form `{ "error": "Readable explanation" }`.
 | 413    | Request or import exceeds its limit      |
 | 422    | Malformed or unsupported transcript      |
 | 500    | Collector failed to complete the request |
+
+## Git and Codex evidence
+
+`codex` is a supported event source. Hook metadata may include `turnId` and `interrupted`. Pair agent boundaries by source, session, and turn ID; do not combine different agents with identical session IDs.
+
+`git_checkpoint` events use source `git` and actor `unknown`. Metadata contains `git` with a 64-character hexadecimal `repositoryId`, a 40- or 64-character hexadecimal `commit`, and an optional `branch` of up to 160 characters. `checkpointReason` is `connected`, `head-changed`, or `history-changed`. Aggregate `filesChanged`, `linesAdded`, and `linesDeleted` are optional nonnegative integers. They describe differences between observations, not effort or authored changes.
+
+Heartbeat samples may include the same optional `git` context. Reports preserve it on counted slices, including clipped slices. Adding Git context never increases counted time. Health includes `evidenceVersion: 1` so updated extensions reject collectors that cannot accept these fields.
