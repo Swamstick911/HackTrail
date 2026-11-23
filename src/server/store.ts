@@ -44,11 +44,18 @@ export interface TimelineQuery {
 }
 
 export class ActivityStore {
-  private database: Database;
+  readonly database: Database;
   readonly tracking: TrackingStore;
 
-  constructor(filePath: string) {
-    this.database = new Database(filePath);
+  constructor(
+    filePath: string | Database,
+    readonly scopeId = 'local',
+  ) {
+    this.database = typeof filePath === 'string' ? new Database(filePath) : filePath;
+    if (typeof filePath !== 'string') {
+      this.tracking = new TrackingStore(this.database, scopeId, false);
+      return;
+    }
     this.database.pragma('journal_mode = WAL');
     this.database.pragma('foreign_keys = ON');
     this.database.pragma('busy_timeout = 5000');
@@ -65,8 +72,18 @@ export class ActivityStore {
         'CREATE TABLE IF NOT EXISTS workspace_links (workspace_key TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE);',
       ].join('\n'),
     );
-    this.tracking = new TrackingStore(this.database);
-    this.database.pragma('user_version = 3');
+    const columns = this.database.prepare('PRAGMA table_info(projects)').all() as {
+      name: string;
+    }[];
+    if (!columns.some((column) => column.name === 'scope_id'))
+      this.database.exec("ALTER TABLE projects ADD COLUMN scope_id TEXT NOT NULL DEFAULT 'local'");
+    this.database.exec('CREATE INDEX IF NOT EXISTS projects_scope ON projects(scope_id)');
+    this.tracking = new TrackingStore(this.database, scopeId);
+    this.database.pragma('user_version = 4');
+  }
+
+  forScope(scopeId: string) {
+    return new ActivityStore(this.database, scopeId);
   }
 
   close() {
@@ -78,9 +95,9 @@ export class ActivityStore {
       .prepare(
         'SELECT p.*, COUNT(e.id) AS event_count, MAX(e.occurred_at) AS last_event_at ' +
           'FROM projects p LEFT JOIN events e ON e.project_id = p.id ' +
-          'GROUP BY p.id ORDER BY p.is_example, p.created_at DESC, p.id',
+          'WHERE p.scope_id = ? GROUP BY p.id ORDER BY p.is_example, p.created_at DESC, p.id',
       )
-      .all() as unknown as ProjectRow[];
+      .all(this.scopeId) as unknown as ProjectRow[];
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -92,15 +109,28 @@ export class ActivityStore {
   }
 
   getProject(id: string): Project {
-    const project = this.listProjects().find((item) => item.id === id);
-    if (!project) throw new StoreError('Project not found.', 404);
-    return project;
+    const row = this.database
+      .prepare(
+        'SELECT p.*, COUNT(e.id) AS event_count, MAX(e.occurred_at) AS last_event_at FROM projects p LEFT JOIN events e ON e.project_id = p.id WHERE p.id = ? AND p.scope_id = ? GROUP BY p.id',
+      )
+      .get(id, this.scopeId) as unknown as ProjectRow | undefined;
+    if (!row) throw new StoreError('Project not found.', 404);
+    return {
+      id: row.id,
+      name: row.name,
+      isExample: Boolean(row.is_example),
+      createdAt: row.created_at,
+      eventCount: row.event_count,
+      lastEventAt: row.last_event_at,
+    };
   }
 
   createProject(name: string, id: string = randomUUID(), isExample = false): Project {
     this.database
-      .prepare('INSERT INTO projects (id, name, is_example, created_at) VALUES (?, ?, ?, ?)')
-      .run(id, name, Number(isExample), new Date().toISOString());
+      .prepare(
+        'INSERT INTO projects (id, name, is_example, created_at, scope_id) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(id, name, Number(isExample), new Date().toISOString(), this.scopeId);
     return this.getProject(id);
   }
 
@@ -110,6 +140,7 @@ export class ActivityStore {
   }
 
   resolveWorkspace(key: string, name: string, projectId?: string): Project {
+    if (this.scopeId !== 'local') key = this.scopeId + ':' + key;
     return this.database.transaction(() => {
       const linked = this.database
         .prepare('SELECT project_id FROM workspace_links WHERE workspace_key = ?')
@@ -152,12 +183,15 @@ export class ActivityStore {
       'INSERT INTO events (id, project_id, occurred_at, source, actor, kind, payload) VALUES (?, ?, ?, ?, ?, ?, ?)',
     );
     const existing = this.database.prepare('SELECT payload FROM events WHERE id = ?');
-    const projectExists = this.database.prepare('SELECT id FROM projects WHERE id = ?');
+    const projectExists = this.database.prepare(
+      'SELECT id FROM projects WHERE id = ? AND scope_id = ?',
+    );
     return this.database.transaction(() => {
       let inserted = 0;
       let duplicates = 0;
       for (const event of events) {
-        if (!projectExists.get(event.projectId)) throw new StoreError('Project not found.', 404);
+        if (!projectExists.get(event.projectId, this.scopeId))
+          throw new StoreError('Project not found.', 404);
         const payload = JSON.stringify(event);
         const previous = existing.get(event.id) as EventRow | undefined;
         if (previous) {

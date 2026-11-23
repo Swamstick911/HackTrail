@@ -23,7 +23,10 @@ export const timeSampleSchema = z
     projectId: identifier,
     startedAt: instant,
     endedAt: instant,
-    signal: z.enum(['keyboard', 'mouse']),
+    signal: z.enum(['keyboard', 'mouse', 'heartbeat']),
+    language: z.string().max(64).optional(),
+    editor: z.string().max(80).optional(),
+    originSampleId: identifier.optional(),
     git: gitContextSchema.optional(),
   })
   .strict()
@@ -50,6 +53,9 @@ export interface TimeSlice {
   endedAt: string;
   sampleId: string;
   git?: GitContext;
+  language?: string;
+  editor?: string;
+  signal?: TimeSample['signal'];
 }
 export interface TrackingClient {
   id: string;

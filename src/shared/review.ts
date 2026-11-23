@@ -45,6 +45,7 @@ export function reviewActivity(
   for (const event of ordered) {
     if (!event.metadata.sessionId) continue;
     const key = JSON.stringify([
+      event.projectId,
       event.source,
       event.metadata.sessionId,
       event.metadata.turnId ?? '',

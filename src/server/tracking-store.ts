@@ -30,7 +30,12 @@ export function subtractRanges(range: Range, exclusions: Range[]): Range[] {
 }
 
 export class TrackingStore {
-  constructor(private database: Database) {
+  constructor(
+    private database: Database,
+    private scopeId = 'local',
+    initialize = true,
+  ) {
+    if (!initialize) return;
     database.exec(
       [
         'CREATE TABLE IF NOT EXISTS time_samples (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client_id TEXT NOT NULL, payload TEXT NOT NULL, received_at TEXT NOT NULL);',
@@ -41,17 +46,33 @@ export class TrackingStore {
         'CREATE TABLE IF NOT EXISTS tracking_clients (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, label TEXT NOT NULL, state TEXT NOT NULL, last_seen_at TEXT NOT NULL);',
       ].join('\n'),
     );
+    const columns = database.prepare('PRAGMA table_info(tracking_pauses)').all() as {
+      name: string;
+    }[];
+    if (!columns.some((column) => column.name === 'scope_id'))
+      database.exec(
+        "ALTER TABLE tracking_pauses ADD COLUMN scope_id TEXT NOT NULL DEFAULT 'local'",
+      );
+    database.exec('CREATE INDEX IF NOT EXISTS pauses_scope ON tracking_pauses(scope_id, start)');
   }
 
   paused() {
-    return Boolean(this.database.prepare('SELECT id FROM tracking_pauses WHERE end IS NULL').get());
+    return Boolean(
+      this.database
+        .prepare('SELECT id FROM tracking_pauses WHERE end IS NULL AND scope_id = ?')
+        .get(this.scopeId),
+    );
   }
 
   pause(paused: boolean, now = Date.now()) {
     if (paused && !this.paused())
-      this.database.prepare('INSERT INTO tracking_pauses (start) VALUES (?)').run(now);
+      this.database
+        .prepare('INSERT INTO tracking_pauses (start, scope_id) VALUES (?, ?)')
+        .run(now, this.scopeId);
     if (!paused)
-      this.database.prepare('UPDATE tracking_pauses SET end = ? WHERE end IS NULL').run(now);
+      this.database
+        .prepare('UPDATE tracking_pauses SET end = ? WHERE end IS NULL AND scope_id = ?')
+        .run(now, this.scopeId);
     return { paused: this.paused() };
   }
 
@@ -61,9 +82,12 @@ export class TrackingStore {
     const existing = this.database.prepare(
       'SELECT payload, client_id FROM time_samples WHERE id = ?',
     );
-    const project = this.database.prepare('SELECT is_example FROM projects WHERE id = ?');
+    const project = this.database.prepare(
+      'SELECT is_example FROM projects WHERE id = ? AND scope_id = ?',
+    );
     return this.database.transaction(() => {
-      const selected = project.get(heartbeat.projectId) as { is_example: number } | undefined;
+      const selected = project.get(heartbeat.projectId, this.scopeId) as
+        { is_example: number } | undefined;
       if (!selected) throw new StoreError('Project not found.', 404);
       if (selected.is_example)
         throw new StoreError('Connect a real project to track your work.', 400);
@@ -90,13 +114,20 @@ export class TrackingStore {
           );
         }
         const overlaps = this.database
-          .prepare('SELECT start, end FROM time_slices WHERE start < ? AND end > ?')
-          .all(range.end, range.start) as unknown as Range[];
+          .prepare(
+            'SELECT s.start, s.end FROM time_slices s JOIN projects p ON p.id = s.project_id WHERE s.start < ? AND s.end > ? AND p.scope_id = ?',
+          )
+          .all(range.end, range.start, this.scopeId) as unknown as Range[];
         const pauses = this.database
           .prepare(
-            'SELECT start, COALESCE(end, ?) AS end FROM tracking_pauses WHERE start < ? AND (end IS NULL OR end > ?)',
+            'SELECT start, COALESCE(end, ?) AS end FROM tracking_pauses WHERE start < ? AND (end IS NULL OR end > ?) AND scope_id = ?',
           )
-          .all(Math.max(now, range.end), range.end, range.start) as unknown as Range[];
+          .all(
+            Math.max(now, range.end),
+            range.end,
+            range.start,
+            this.scopeId,
+          ) as unknown as Range[];
         const slices = subtractRanges(range, [...overlaps, ...pauses]);
         this.database
           .prepare(
@@ -123,6 +154,11 @@ export class TrackingStore {
   }
 
   report(projectId: string, from: number, to: number, now = Date.now()): TrackingReport {
+    const owned = this.database
+      .prepare('SELECT id FROM projects WHERE id = ? AND scope_id = ?')
+      .get(projectId, this.scopeId);
+    if (!owned)
+      return { policy: trackingPolicy, paused: this.paused(), totalMs: 0, slices: [], clients: [] };
     const rows = this.database
       .prepare(
         'SELECT s.project_id, s.sample_id, s.start, s.end, t.payload FROM time_slices s JOIN time_samples t ON t.id = s.sample_id WHERE s.project_id = ? AND s.start < ? AND s.end > ? ORDER BY s.start',
@@ -138,6 +174,9 @@ export class TrackingStore {
       projectId: row.project_id,
       sampleId: row.sample_id,
       git: (JSON.parse(row.payload) as TimeSample).git,
+      language: (JSON.parse(row.payload) as TimeSample).language,
+      editor: (JSON.parse(row.payload) as TimeSample).editor,
+      signal: (JSON.parse(row.payload) as TimeSample).signal,
       startedAt: new Date(Math.max(from, row.start)).toISOString(),
       endedAt: new Date(Math.min(to, row.end)).toISOString(),
     }));
@@ -167,6 +206,10 @@ export class TrackingStore {
   }
 
   export(projectId: string) {
+    const owned = this.database
+      .prepare('SELECT id FROM projects WHERE id = ? AND scope_id = ?')
+      .get(projectId, this.scopeId);
+    if (!owned) return { ...this.report(projectId, 0, Date.now()), samples: [] };
     const samples = this.database
       .prepare(
         'SELECT payload, received_at AS receivedAt FROM time_samples WHERE project_id = ? ORDER BY received_at',

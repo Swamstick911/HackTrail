@@ -11,3 +11,5 @@ releases/
 extensions/vscode/LICENSE
 *.vsix
 
+
+.hacktrail-platform/
