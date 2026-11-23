@@ -115,6 +115,10 @@ npm run test:e2e
 
 The stack is TypeScript, Fastify, SQLite, React, and Vite. See the [API contract](docs/api.md), [live tracking design](docs/live-tracking.md), and [UI research](docs/ui-design.md).
 
+## Adoption plan
+
+The next milestone is a selected-period evidence export that one YSWS organizer can evaluate with a small pilot. The organizer discussion shared on November 23 gives 10,000 hours approved by both the program and Q&I as equivalent to the 1,000 weighted-project target. Exact eligibility, attribution, and weighting still need confirmation. The [bounty roadmap](docs/bounty-roadmap.md) records the proposed submission flow, pilot questions, and validation work.
+
 ## Current limits
 
 This release provides the local tracking and review workflow. It does not include accounts, public profiles, a hosted service, remote Git repository linking, or every editor and AI harness. Local records are editable and do not verify authorship or approve bounty hours. The counting policy still needs validation against reference sessions. The [bounty roadmap](docs/bounty-roadmap.md) keeps the remaining work tied to those requirements.

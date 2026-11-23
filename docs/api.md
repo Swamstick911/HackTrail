@@ -54,13 +54,13 @@ Use the project ID returned by project creation. A batch body has an `events` ar
 }
 ```
 
-- Sources: `claude-code`, `vscode`, `git`, `manual`.
+- Sources: `claude-code`, `codex`, `vscode`, `git`, `manual`.
 - Actors: `user`, `agent`, `tool`, `unknown`.
-- Kinds: `user_prompt`, `agent_response`, `tool_call`, `tool_result`, `editor_edit`, `editor_focus`, `git_commit`, `work_note`, `agent_started`, `agent_stopped`.
+- Kinds: `user_prompt`, `agent_response`, `tool_call`, `tool_result`, `editor_edit`, `editor_focus`, `git_commit`, `git_checkpoint`, `work_note`, `agent_started`, `agent_stopped`.
 - Optional metadata: `toolName`, `callId`, `model`, `sessionId`, and `hook` up to 160 characters; `success` as a boolean; `excerpt` up to 500 characters.
 - Optional evidence: `{ "fileName": "session.jsonl", "line": 1, "block": 0 }`. Lines start at 1; blocks start at 0. Directory paths are rejected.
 
-Unknown fields are rejected. Timestamps must include a timezone and are normalized to UTC. Actor and source values are supplied evidence labels, not verified identities. The VS Code adapter uses the timing endpoint below. Git event kinds remain reserved for a future adapter.
+Unknown fields are rejected. Timestamps must include a timezone and are normalized to UTC. Actor and source values are supplied evidence labels, not verified identities. The VS Code adapter uses the timing endpoint below. The live Git adapter emits `git_checkpoint`; `git_commit` remains available for imported evidence. See Git and Codex evidence below for the additional metadata fields.
 
 The response is `{ "inserted": 1, "duplicates": 0 }`. Replaying an identical normalized event ID is safe. Reusing an ID with different contents returns 409 and rolls back the entire batch.
 
