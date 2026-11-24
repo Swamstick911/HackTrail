@@ -2,14 +2,24 @@
 
 The target is a dependable daily tracker and shared platform. Hackatime is the comparison point for account setup, project statistics, privacy settings, editor support, public profiles, and integration APIs. HackTrail adds explicit separation of editor and agent time, Git context, and inspectable evidence. Feature parity is not a claim of equal reliability or approved productive-struggle measurement.
 
-## Build order
+The original eleven requirements in the [bounty roadmap](bounty-roadmap.md#original-requirements) define the current scope. Prioritize tracking correctness and the existing submission evidence flow. A separate organizer management system and additional creative features are deferred.
+
+## Implemented foundation
 
 1. Account isolation, maintained authentication, persistent sessions, scoped API keys, and private server storage.
 2. Project management, account time zones, daily/project/language statistics, goals, public profile controls, and opt-in community statistics.
 3. Device authorization and durable local-to-platform sync with visible status, retries, revocation, and no automatic transfer of conversation excerpts.
 4. A WakaTime-compatible heartbeat entry point, with heartbeat-derived estimates distinguished from direct editor samples.
 5. Selected-period reports with explicit disclosure preview, expiring access, revocation, and reproducible JSON exports.
-6. Installation, migration, security, and complete browser tests across multiple accounts and devices. Then real-device and reference-session validation before a YSWS pilot.
+6. Automated installation, migration, account isolation, and browser workflow checks across multiple accounts and devices.
+
+## Next implementation order
+
+1. Reproduce and fix errors at activity, idle, sleep, focus, and offline boundaries without changing the counting policy silently.
+2. Validate installation and everyday tracking on the supported operating systems, including the low-spec Dell.
+3. Make the adapter contract usable for additional popular editors and AI harnesses.
+4. Check that external reviewers can reproduce submitted intervals and understand missing evidence using the existing reports.
+5. Measure server capacity and hosting cost at the bounty's stated load before a program pilot.
 
 ## Architecture
 

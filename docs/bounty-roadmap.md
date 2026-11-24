@@ -2,6 +2,34 @@
 
 HackTrail should become a useful daily record for people building with AI, with hours that reviewers can inspect. The target is productive struggle. Editor activity, agent runtime, typing patterns, and commit counts do not establish that by themselves.
 
+## Current scope
+
+Build around the original eleven bounty requirements. Hackatime is the reference for simple, passive tracking and useful project statistics. Keep the existing dashboard and reports, and prioritize correctness, low-friction setup, privacy, integration coverage, and auditability. Extra creative features come after the core requirements.
+
+A standalone organizer management system, payout handling, and program approval queues are deferred. External parties must be able to audit submitted hours, but the bounty does not require HackTrail to replace their management tools. Typing-style classifiers and invented productive-struggle scores are not part of the current plan.
+
+The immediate implementation work is to check passive tracking through idle boundaries, focus changes, sleep, project switching, and offline recovery. Fix reproducible errors and preserve those cases as regression tests. Real-session validation remains separate from these automated counting checks.
+
+## Original requirements
+
+This checklist paraphrases the original bounty announcement supplied by Swamstick, recovered from the earlier project discussion on November 24. It is separate from our implementation choices and the later acceptance clarification below.
+
+| Requirement                                                                                                             | Current position                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1. Open source under AGPLv3                                                                                             | License in place.                                                                                                  |
+| 2. Accurately measure productive-struggle hours spent building projects with AI                                         | Editor activity is estimated; productive-struggle accuracy needs reference-session validation.                     |
+| 3. Be useful and motivating without YSWS incentives                                                                     | Personal statistics, project history, and goals provide the initial experience. Validate usefulness with builders. |
+| 4. Track passively, including short visits and project switching                                                        | VS Code collection, idle handling, and offline replay exist. Continue testing real workflow boundaries.            |
+| 5. Central accounts, public-by-default profiles, projects, Git integration, and real-time statistics                    | Implemented in the local/shared platform. Production operation remains to be validated.                            |
+| 6. Be comfortable for privacy-conscious users                                                                           | Collection and sharing controls exist; independent review remains outstanding.                                     |
+| 7. Support AI models and harnesses broadly, starting with popular tools and an extensible plugin approach               | Claude Code and Codex adapters exist. Broader integrations and a documented third-party adapter workflow remain.   |
+| 8. Support Windows, macOS, Linux, and low-spec computers                                                                | Builds and automated checks pass on all three. Real installations and the Dell still need validation.              |
+| 9. Make a submitted hour reliably represent a productive-struggle hour toward a shipped project                         | Not established by current activity counts. Validate with independently reviewed sessions.                         |
+| 10. Let external parties audit submitted hours, with different privacy guarantees allowed for logged and submitted data | Selected-period reports, disclosure previews, and raw exports exist. Validate them with external reviewers.        |
+| 11. Host within $500/month for 15,488 monthly active users logging 109,759 hours/month                                  | Target-scale load and cost measurements remain outstanding.                                                        |
+
+The original acceptance criterion requires both meeting these requirements and tracking 1,000 weighted projects in the Hack Club Unified Projects DB. Code, automated fixtures, and installations alone do not satisfy it.
+
 ## Acceptance update: November 23, 2026
 
 The organizer discussion shared by Swamstick says there is no fixed deadline: the first qualifying tracker to reach 1,000 weighted projects in the unified database wins. Program organizers adopt the method, participants submit projects using it, and accepted work reaches the database through the program's submission process.
