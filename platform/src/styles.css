@@ -769,6 +769,7 @@ progress::-moz-progress-bar {
   align-items: center;
   gap: 0;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 .bar-track {
   height: calc(100% - 30px);

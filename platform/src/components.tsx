@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '../../web/src/icons.js';
 import { durationLabel } from '../../src/shared/tracking.js';
 import type { Dashboard } from '../../src/platform/analytics.js';
@@ -94,11 +94,22 @@ export function WeekChart({ daily }: { daily: Dashboard['daily'] }) {
   const groupId = useId();
   const [selectedDate, setSelectedDate] = useState('');
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const selected = daily.find((day) => day.date === selectedDate) ?? daily.at(-1);
+  const activeDate = selected?.date;
   const inspected = daily.find((day) => day.date === hoveredDate) ?? selected;
   const maximum = Math.ceil(Math.max(60_000, ...daily.map((day) => day.totalMs)) / 60_000) * 60_000;
   const dateLabel = (date: string, options: Intl.DateTimeFormatOptions) =>
     new Date(date + 'T12:00:00Z').toLocaleDateString(undefined, { ...options, timeZone: 'UTC' });
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    const column = container?.querySelector('input:checked')?.parentElement;
+    if (!container || !column) return;
+    const left = column.getBoundingClientRect().left - container.getBoundingClientRect().left;
+    if (left < 0) container.scrollLeft += left;
+    else if (left + column.clientWidth > container.clientWidth)
+      container.scrollLeft += left + column.clientWidth - container.clientWidth;
+  }, [activeDate, daily.length]);
   if (!inspected) return <p className="panel-empty muted">No days in this period.</p>;
   return (
     <div className="activity-chart">
@@ -117,26 +128,33 @@ export function WeekChart({ daily }: { daily: Dashboard['daily'] }) {
           <span>{durationLabel(maximum / 2)}</span>
           <span>0</span>
         </div>
-        <div className="chart-scroll">
+        <div className="chart-scroll" ref={scrollRef}>
           <fieldset
             className={'week-chart' + (daily.length > 7 ? ' month-chart' : '')}
             onMouseLeave={() => setHoveredDate(null)}
           >
             <legend className="sr-only">Daily editor activity</legend>
             {daily.map((day) => (
-              <label className="day-column" key={day.date}>
+              <label
+                className="day-column"
+                key={day.date}
+                onMouseEnter={() => setHoveredDate(day.date)}
+              >
                 <input
                   className="sr-only"
                   type="radio"
                   name={groupId}
                   checked={selected?.date === day.date}
-                  onChange={() => setSelectedDate(day.date)}
+                  onChange={() => {
+                    setSelectedDate(day.date);
+                    setHoveredDate(null);
+                  }}
                   onFocus={() => setHoveredDate(null)}
                   aria-label={
                     dateLabel(day.date, { dateStyle: 'full' }) + ', ' + durationLabel(day.totalMs)
                   }
                 />
-                <span className="bar-track" onMouseEnter={() => setHoveredDate(day.date)}>
+                <span className="bar-track">
                   <span className="bar" style={{ height: (day.totalMs / maximum) * 100 + '%' }} />
                 </span>
                 <span className="day-label">

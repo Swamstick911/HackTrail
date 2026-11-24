@@ -89,7 +89,11 @@ test('a builder approves an editor, syncs activity, publishes a project, and sha
   await expect(page.locator('.stats-grid').getByText('10m', { exact: true })).toBeVisible();
   await expect(page.locator('.stats-grid').getByText('5m', { exact: true })).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Garden Journal', exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('dashboard-desktop.png'), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath('dashboard-desktop.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
   await page.getByRole('button', { name: 'Garden Journal', exact: true }).click();
   await page.getByLabel('Project note').fill('I fixed the date filter and tested the empty state.');
   await page.getByRole('button', { name: 'Save note' }).click();
@@ -140,7 +144,11 @@ test('a builder approves an editor, syncs activity, publishes a project, and sha
   expect(rejected.status()).toBe(401);
   await page.goto('/projects/' + projectId);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: testInfo.outputPath('project-mobile.png'), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath('project-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
   await anonymous.close();
@@ -191,7 +199,11 @@ test('mobile authentication and empty states stay usable without horizontal scro
   await page.setViewportSize({ width: 390, height: 844 });
   await signup(page, 'Sam');
   await expect(page.getByRole('button', { name: 'Connect your editor' })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('empty-mobile.png'), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath('empty-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('link', { name: 'Projects', exact: true }).click();
   await expect(
