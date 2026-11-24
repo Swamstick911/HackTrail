@@ -19,6 +19,7 @@ export function resetEditor() {
   listeners.clear();
   commandsByName.clear();
   window.state.focused = true;
+  window.activeTextEditor.document.languageId = 'typescript';
 }
 export const workspace = {
   isTrusted: true,

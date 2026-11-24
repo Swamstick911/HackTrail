@@ -89,6 +89,24 @@ describe('VS Code adapter with the real time store', () => {
     expect(store.tracking.export('project-one').totalMs).toBe(30_000);
   });
 
+  it('attributes the closed interval to the previous language when switching editors', async () => {
+    emit('selection', { kind: 1, textEditor: window.activeTextEditor });
+    await vi.advanceTimersByTimeAsync(5000);
+    window.activeTextEditor.document.languageId = 'python';
+    emit('editor', window.activeTextEditor);
+    await vi.advanceTimersByTimeAsync(10000);
+    const slices = store.tracking.export('project-one').slices;
+    expect(
+      slices.map((slice) => [
+        slice.language,
+        Date.parse(slice.endedAt) - Date.parse(slice.startedAt),
+      ]),
+    ).toEqual([
+      ['typescript', 5000],
+      ['python', 10000],
+    ]);
+  });
+
   it('captures only the time before the window loses focus', async () => {
     emit('selection', { kind: 2, textEditor: window.activeTextEditor });
     await vi.advanceTimersByTimeAsync(5000);

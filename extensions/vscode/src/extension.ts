@@ -50,6 +50,7 @@ export function activate(context: vscode.ExtensionContext) {
     previous?: { projectId: string; git: GitContext };
   }>('evidence', { events: [] });
   let gitContext: GitContext | undefined;
+  let language = vscode.window.activeTextEditor?.document.languageId;
   let pollingGit = false;
   let lastGitPoll = 0;
   let clientId = context.workspaceState.get<string>('clientId');
@@ -84,7 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
       startedAt: new Date(interval.start).toISOString(),
       endedAt: new Date(interval.end).toISOString(),
       signal: interval.signal,
-      language: vscode.window.activeTextEditor?.document.languageId,
+      language,
       editor: vscode.env.appName.slice(0, 80),
       git: gitContext,
     });
@@ -114,6 +115,7 @@ export function activate(context: vscode.ExtensionContext) {
         Boolean(enabled && connection && vscode.window.state.focused && editorInWorkspace()),
       ),
     );
+    language = vscode.window.activeTextEditor?.document.languageId;
     render();
   }
 
@@ -127,13 +129,17 @@ export function activate(context: vscode.ExtensionContext) {
           : clock.active(Date.now())
             ? 'Tracking'
             : 'Idle';
+    const syncStatus =
+      platform && platform.projectId !== connection?.projectId
+        ? 'This project is local only. Run Connect Account to sync it.'
+        : platformStatus;
     status.text = '$(watch) HackTrail: ' + state;
     status.tooltip = connection
       ? connection.projectName +
         '\n' +
         queue.length +
         ' samples waiting for the local collector. Click to pause or resume.\n' +
-        platformStatus
+        syncStatus
       : 'Enable tracking for this workspace.';
     status.command = connection ? 'hacktrail.toggleTracking' : 'hacktrail.connect';
   }
