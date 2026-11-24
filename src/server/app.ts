@@ -100,7 +100,7 @@ export function createApp(options: AppOptions) {
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'hacktrail',
-    version: '0.4.0',
+    version: '0.5.0',
     setupVersion: 1,
     evidenceVersion: 1,
   }));

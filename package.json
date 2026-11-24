@@ -1,6 +1,6 @@
 {
   "name": "hacktrail",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -27,7 +27,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run format:check && npm run typecheck && npm test && npm run build",
-    "start:platform": "node dist/platform/main.js",
+    "start:platform": "node --env-file-if-exists=.env dist/platform/main.js",
     "dev:platform": "tsx watch src/platform/main.ts",
     "test:e2e:platform": "playwright test --config playwright.platform.config.ts"
   },

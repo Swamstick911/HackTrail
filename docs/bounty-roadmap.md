@@ -10,7 +10,7 @@ The discussion gives 10,000 hours approved by both the YSWS program and quality/
 
 The same discussion says Q&I can fine the YSWS program when approved work fails its checks. Problems caught earlier by reviewers or Fraud Squad do not count toward weighted projects until fixed. We should help organizers produce reviewable evidence and correct problems before approval; HackTrail cannot guarantee approval or make a Q&I decision itself.
 
-This clarification changes the order of work. Recruit an organizer and validate a small submission flow while completing the software. The other bounty requirements still apply.
+The subsequent implementation decision is to finish and test a working tracker and platform before asking a program to adopt it. Organizer feedback can shape the evidence format, but live participation waits for reference-session and real-device validation. The other bounty requirements still apply.
 
 ## Shipped: 0.4
 
@@ -20,11 +20,17 @@ This clarification changes the order of work. Recruit an organizer and validate 
 - Separate editor activity, agent runtime, and their overlap.
 - Local metadata storage and consent before expanding an existing installation's collection.
 
-These are implementation milestones, not validation of productive-struggle hours. The current export contains the full project history; it is not yet a selected-hour submission package. There is no central account service, program integration, or authoritative weighted-project counter.
+These are implementation milestones, not validation of productive-struggle hours. The local export still contains full history; the 0.5 platform adds selected-period reports.
 
-## Next release: an organizer can inspect one submission
+## Shipped: 0.5 platform
 
-Build a selected-period evidence package before adding more general dashboard features. A participant should be able to:
+Accounts, private synced projects, profile visibility, time zones, statistics, daily goals, opt-in community statistics, device approval, durable editor sync, WakaTime-compatible heartbeat ingestion, and expiring selected-period reports are implemented. Git and agent collection/disclosure have separate choices. Public totals exclude private projects. See the [platform guide](platform.md) for operation and limits.
+
+No program integration or authoritative weighted-project counter exists. The next gate is a tested tracker, reference-session results, and a security/capacity review before a live program pilot.
+
+## Evidence package and organizer evaluation
+
+The selected-period package is implemented. Validate it against these requirements before an organizer relies on it. A participant should be able to:
 
 1. Identify the project and provide its repository and demo links.
 2. Select the time range being submitted and preview the exact information included.
@@ -34,7 +40,7 @@ Build a selected-period evidence package before adding more general dashboard fe
 
 The export must exclude activity outside the selection, unrelated project data, credentials, and unselected note text. Required start/stop context crossing the boundary must be explicitly shown in the preview, with reported time clipped to the selected range. Re-exporting the same evidence should preserve stable references so reviewers can detect duplicate claims; identifiers and checksums do not prove authorship.
 
-Keep this usable as a local file first. Choose the first program-specific import or hosted sharing flow after an organizer confirms their requirements. Do not invent a direct Unified write API or ask participants for program credentials.
+Reports can be downloaded as JSON or shared through an expiring link. Choose a program-specific import only after an organizer confirms its requirements. Do not invent a direct Unified write API or ask participants for program credentials.
 
 A useful implementation reference is [Scare's program submission adapter](https://github.com/hackclub/scare/blob/main/src/server/airtable.ts), inspected on November 23. It mirrors project records into the program's Airtable submission table, includes alternate tracking evidence, and leaves the Unified submission control to a person. This demonstrates one program's workflow, not official acceptance of HackTrail or a universal integration contract.
 
@@ -54,7 +60,7 @@ The first adoption milestone is one organizer agreeing to evaluate the format. T
 
 No outreach has been sent and no program has agreed to a pilot. A possible message for the user to send once the export is demonstrable:
 
-> I'm building HackTrail, an AGPL tracker for work with AI. It already records local editor activity, Claude/Codex runtime, and Git context. I'm adding a selected-period report your reviewers can inspect. Would you help shape a small pilot alongside your existing process? I'd like to compare the evidence and review effort before asking you to accept its hours officially.
+> I'm building HackTrail, an AGPL tracker for work with AI. It already records local editor activity, Claude/Codex runtime, and Git context. It includes a selected-period report your reviewers can inspect. Would you help shape a small pilot alongside your existing process? I'd like to compare the evidence and review effort before asking you to accept its hours officially.
 
 ## Validate time and review effort
 
@@ -70,7 +76,7 @@ Measure startup time, CPU, memory, queue size, and delivery reliability on the D
 
 ## Central service and wider adoption
 
-Build accounts, projects, public-by-default profiles, remote Git links, and real-time statistics around the validated record and the first program's submission needs. Public project summaries need a different disclosure policy from detailed local evidence. Preview what will be shared, including branch names and optional notes.
+Accounts, projects, public-by-default profiles, user-provided repository links, and real-time statistics now exist. Validate the shared service around the record and the first program's submission needs. Public project summaries need a different disclosure policy from detailed local evidence. Preview what will be shared, including branch names and optional notes.
 
 Keep observed hours, participant claims, program-approved hours, Unified records, and Q&I outcomes distinct. Database presence alone must not imply Q&I acceptance. An official progress total must derive from the confirmed external records, including revisions and removals. A local checkbox cannot establish official eligibility.
 
@@ -78,4 +84,4 @@ For capacity planning, 500 qualifying submissions averaging 20 jointly approved 
 
 Continue adapter support according to pilot usage while keeping unknown activity explicit. Load-test the central service against the stated 15,488 monthly active users and 109,759 monthly hours. Publish measurements and a cost model against the $500 monthly limit before claiming the scaling requirement.
 
-AGPLv3, low-spec support, useful personal feedback, privacy, auditable hours, broad adapters, the central service, and qualifying adoption all remain part of the goal. The immediate priority is a trustworthy submission that a real organizer can use.
+AGPLv3, low-spec support, useful personal feedback, privacy, auditable hours, broad adapters, the central service, and qualifying adoption all remain part of the goal. The immediate priority is a reliable tracker and platform, followed by evidence that a real organizer can evaluate.

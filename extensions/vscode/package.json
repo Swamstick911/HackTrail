@@ -1,8 +1,8 @@
 {
   "name": "hacktrail",
   "displayName": "HackTrail",
-  "description": "Local project time tracking from editor activity, with an automatic idle cutoff.",
-  "version": "0.4.0",
+  "description": "Local editor tracking with offline sync, project statistics, and optional Git and agent activity.",
+  "version": "0.5.0",
   "publisher": "swamstick911",
   "license": "AGPL-3.0-only",
   "repository": {

@@ -1,18 +1,28 @@
 # HackTrail
 
-Local time tracking and a project journal for people building with AI.
+A local tracker and shared project platform for people building with AI.
 
-HackTrail estimates editor activity from VS Code, collects Claude Code and Codex events live, and keeps Git checkpoints and notes alongside the work. Editor time and agent time stay separate.
+HackTrail estimates editor activity from VS Code, collects Claude Code and Codex events live, and keeps Git checkpoints and notes alongside the work. Editor time and agent time stay separate. The shared platform adds accounts, offline editor sync, project statistics, public profiles, scoped API keys, and selected-period reports.
+
+## Start the platform
+
+```sh
+npm ci
+npm run build
+npm run start:platform
+```
+
+Use Node.js 26. Open http://127.0.0.1:47657, create an account, and open **Connections** to install the extension. The [platform guide](docs/platform.md) covers editor approval, privacy, other editors, production configuration, backups, and validation. This starts a local development instance; it does not publish a live service.
 
 ## Start with VS Code
 
 1. Install `hacktrail.vsix` using **Extensions: Install from VSIX** in VS Code.
-2. Open your project folder. Accept **Enable tracking** in the HackTrail prompt.
+2. Open your project folder. Accept **Enable tracking** in the HackTrail prompt and choose optional Git, Claude, and Codex collection.
 3. Start working. HackTrail opens the dashboard and handles the collector, project, Git observations, and agent hook installation automatically.
 
 Choose **Editor only** in the prompt to skip Claude, Codex, and Git collection. Dismissing it leaves tracking off. You can return with **HackTrail: Enable Tracking** from the command palette. Restart an existing Claude session once after setup so it loads the hooks. In Codex, open `/hooks` to review and trust the new hooks before collection starts. Existing HackTrail installations must accept the new setup before Git or Codex collection is enabled.
 
-No terminal command, account connection, API key, or separately installed Node.js is needed for extension users. Setup reuses Node.js 26 if available; otherwise it downloads a pinned runtime from nodejs.org and checks its SHA-256 digest before running it. Subsequent starts work offline.
+No terminal command, API key, or separately installed Node.js is needed for local extension tracking. Account sync is optional: run **HackTrail: Connect Account**, choose what to upload, and approve the editor in your browser. Setup reuses Node.js 26 if available; otherwise it downloads a pinned runtime from nodejs.org and checks its SHA-256 digest before running it. Subsequent starts work offline.
 
 The extension starts the collector when needed and restarts it after a disconnect. A collector started by the extension exits after ten minutes without requests. Existing projects and offline samples survive restarts.
 
@@ -51,7 +61,7 @@ Use the dashboard's **How is this counted?** link for the current rules. Exports
 
 ## Claude Code and Codex
 
-Choosing **Enable tracking** in VS Code installs project-local hooks for both agents. Codex requires a supported version with lifecycle hooks and approval through `/hooks`; see the [Codex hook documentation](https://learn.chatgpt.com/docs/hooks). The installer keeps existing settings and other hooks, saves a backup when settings change, and ignores local tracking files in Git. Repeating setup does not duplicate hooks or projects.
+Choosing the Claude or Codex collection option in VS Code installs its project-local hooks. Codex requires a supported version with lifecycle hooks and approval through `/hooks`; see the [Codex hook documentation](https://learn.chatgpt.com/docs/hooks). The installer keeps existing settings and other hooks, saves a backup when settings change, and ignores local tracking files in Git. Repeating setup does not duplicate hooks or projects.
 
 Hooks record prompts as events without storing their text, tool names and outcomes, and agent start/finish events. They do not store code, prompts, tool arguments, or outputs. The dashboard updates automatically.
 
@@ -70,7 +80,7 @@ npm run connect:codex -- --workspace "YOUR_PROJECT_FOLDER" --remove
 
 ## Git context
 
-With full tracking enabled, open the repository root in VS Code and have Git installed. HackTrail checks the local HEAD and branch every 30 seconds. The initial checkpoint records the current state without importing historical work. Later checkpoints capture changes in HEAD or branch, including checkouts and rewritten history.
+With Git collection enabled, open the repository root in VS Code and have Git installed. HackTrail checks the local HEAD and branch every 30 seconds. The initial checkpoint records the current state without importing historical work. Later checkpoints capture changes in HEAD or branch, including checkouts and rewritten history.
 
 Editor samples carry the last observed commit and branch. Checkpoints show aggregate file and text-line changes between observed commits when available; binary changes have no text-line count. Git observations do not add hours, prove authorship, or measure effort. Changes within a polling interval may be missed, and uncommitted edits are not captured.
 
@@ -97,7 +107,7 @@ When started manually with `npm start`, the collector stores its database and ac
 | `HACKTRAIL_DATA_DIR` | `.hacktrail` | Choose another data directory |
 | `HACKTRAIL_PORT`     | `47654`      | Choose another loopback port  |
 
-The server binds to `127.0.0.1` and checks request hosts and origins. This is a single-user local app, not a public server or a security boundary against other programs on the same machine.
+The collector binds to `127.0.0.1` and checks request hosts and origins. It is a single-user local app, not a public server or a security boundary against other programs on the same machine. The separate platform uses account authentication and its own data directory.
 
 Stop HackTrail before copying its entire data directory for a backup. JSON exports are review records, not restorable workspace backups. Deleting a project removes its stored events and time samples. Connected editors disconnect when they learn that their project was deleted. Original transcripts are unchanged.
 
@@ -109,6 +119,7 @@ Run `npm run dev:server` and `npm run dev:web` in separate terminals, then open 
 npm run check
 npx playwright install chromium --only-shell
 npm run test:e2e
+npm run test:e2e:platform
 ```
 
 `check` runs formatting, type checking, unit/integration tests, and a complete production build including the VSIX. Browser tests use a temporary database on port 47655 and temporary agent workspaces. Use `npm run format` to format edits.
@@ -117,12 +128,12 @@ The stack is TypeScript, Fastify, SQLite, React, and Vite. See the [API contract
 
 ## Adoption plan
 
-The next milestone is a selected-period evidence export that one YSWS organizer can evaluate with a small pilot. The organizer discussion shared on November 23 gives 10,000 hours approved by both the program and Q&I as equivalent to the 1,000 weighted-project target. Exact eligibility, attribution, and weighting still need confirmation. The [bounty roadmap](docs/bounty-roadmap.md) records the proposed submission flow, pilot questions, and validation work.
+The working platform and selected-period reports now need reference-session and real-device validation before an organizer pilot. Build confidence in the tracker before asking a program to adopt it. The organizer discussion shared on November 23 gives 10,000 hours approved by both the program and Q&I as equivalent to the 1,000 weighted-project target. Exact eligibility, attribution, and weighting still need confirmation. The [bounty roadmap](docs/bounty-roadmap.md) records the proposed submission flow, pilot questions, and validation work.
 
 ## Current limits
 
-This release provides the local tracking and review workflow. It does not include accounts, public profiles, a hosted service, remote Git repository linking, or every editor and AI harness. Local records are editable and do not verify authorship or approve bounty hours. The counting policy still needs validation against reference sessions. The [bounty roadmap](docs/bounty-roadmap.md) keeps the remaining work tied to those requirements.
+This release provides a working shared platform alongside the local tracker. It is self-hostable; no public production deployment, live YSWS integration, complete Hackatime API replacement, or universal editor support is claimed. Local records are editable and do not verify authorship or approve bounty hours. The counting policy still needs validation against reference sessions. The [bounty roadmap](docs/bounty-roadmap.md) keeps the remaining work tied to those requirements.
 
-CI is configured for macOS, Windows, and Linux. Platform support remains provisional until those checks pass. Performance on the Dell Inspiron 5775 still needs an actual device test. This is not a complete bounty submission.
+CI is configured for macOS, Windows, and Linux. CI exercises the code paths; it does not certify every editor, runtime installation, or remote development environment. Performance on the Dell Inspiron 5775 still needs an actual device test. This is not a complete bounty submission.
 
 Licensed under [GNU AGPLv3](LICENSE).
