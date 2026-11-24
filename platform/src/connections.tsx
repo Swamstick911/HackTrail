@@ -59,7 +59,6 @@ export function Connections() {
             )}
             <a className="button" href={editorLink}>
               Connect installed extension
-              <Icon name="arrow" />
             </a>
           </div>
           <p className="small muted">
@@ -221,7 +220,6 @@ export function DeviceApproval() {
           </p>
           <a className="button" href="/">
             Open your dashboard
-            <Icon name="arrow" />
           </a>
         </section>
       ) : (

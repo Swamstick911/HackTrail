@@ -67,44 +67,55 @@ export function Auth({ onSignedIn }: { onSignedIn: () => void }) {
           <img src="/favicon.svg" alt="" width="34" height="34" />
           HackTrail
         </a>
-        <div>
+        <div className="story-content">
           <p className="eyebrow">For the things you make</p>
           <h1>
-            Small steps.
-            <br />A trail worth keeping.
+            Good work
+            <br />
+            leaves a <em>trail.</em>
           </h1>
           <p>
-            See where your time goes, keep your projects moving, and share the work behind the
-            finished thing.
+            The experiments. The small fixes. The moment it finally works. Keep a record of the work
+            behind your next great idea.
           </p>
-          <ol className="story-trail">
-            <li>
-              <span>01</span>
-              <div>
-                <strong>Work in your editor</strong>
-                <p>Your local tracker handles the clock.</p>
-              </div>
-            </li>
-            <li>
-              <span>02</span>
-              <div>
-                <strong>See the whole picture</strong>
-                <p>Editor activity, agent runs, and Git context.</p>
-              </div>
-            </li>
-            <li>
-              <span>03</span>
-              <div>
-                <strong>Share on your terms</strong>
-                <p>Choose what belongs in a public project or report.</p>
-              </div>
-            </li>
-          </ol>
+          <div className="story-map" aria-hidden="true">
+            <svg viewBox="0 0 480 160" fill="none">
+              <path className="map-guide" d="M0 80H480M80 0V160M240 0V160M400 0V160" />
+              <path
+                className="map-branch"
+                d="M80 112H146Q164 112 164 94V44Q164 26 182 26H222Q240 26 240 44V80"
+              />
+              <path
+                className="map-route"
+                d="M0 112H148Q176 112 176 84V80Q176 52 204 52H300Q328 52 328 80V84Q328 112 356 112H480"
+              />
+              <circle cx="80" cy="112" r="8" />
+              <circle cx="240" cy="52" r="8" />
+              <circle cx="400" cy="112" r="8" />
+            </svg>
+            <div className="story-map-labels">
+              <span>Make a start</span>
+              <span>Find your rhythm</span>
+              <span>Share your work</span>
+            </div>
+          </div>
+          <div className="story-detail">
+            <Icon name="shield" />
+            <span>
+              Your projects start private.
+              <br />
+              You choose what to share.
+            </span>
+          </div>
         </div>
-        <p className="small">Open source. Built for builders.</p>
+        <p className="story-footer">
+          <Icon name="code" />
+          Open source. Always a work in progress.
+        </p>
       </section>
       <main className="auth-form">
         <div>
+          <p className="eyebrow auth-eyebrow">Your workspace</p>
           <h2>{title}</h2>
           <p className="muted">
             {mode === 'signup'
@@ -197,7 +208,6 @@ export function Auth({ onSignedIn }: { onSignedIn: () => void }) {
                     forgot: 'Send reset link',
                     reset: 'Update password',
                   }[mode]}
-              <Icon name="arrow" />
             </button>
           </form>
           {mode === 'signin' ? (

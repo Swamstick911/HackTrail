@@ -4,7 +4,6 @@ import type { Dashboard } from '../../src/platform/analytics.js';
 import { api, useAction, useResource } from './api.js';
 import {
   Breakdown,
-  Empty,
   Icon,
   Loading,
   Notice,
@@ -29,7 +28,7 @@ export function Overview({
   return (
     <>
       <PageHeader
-        eyebrow="Your workspace"
+        eyebrow="The work adds up"
         title={'Keep going, ' + profile.name.split(' ')[0] + '.'}
         action={
           <select
@@ -43,7 +42,7 @@ export function Overview({
           </select>
         }
       >
-        A little perspective on what you have been building.
+        Here’s what you’ve been making time for.
       </PageHeader>
       {(resource.error || action.error) && (
         <Notice error>{resource.error?.message || action.error}</Notice>
@@ -52,7 +51,16 @@ export function Overview({
       {stats && (
         <>
           <div className="status-line">
-            <span className={'status-dot' + (stats.paused ? ' paused' : '')} />
+            <span
+              className={
+                'status-dot' +
+                (stats.paused
+                  ? ' paused'
+                  : stats.projects.some((project) => project.active)
+                    ? ' active'
+                    : '')
+              }
+            />
             <span>
               {stats.paused
                 ? 'Account time is paused'
@@ -70,86 +78,101 @@ export function Overview({
                 })
               }
             >
+              <Icon name={stats.paused ? 'play' : 'pause'} width={16} height={16} />
               {stats.paused ? 'Resume account time' : 'Pause account time'}
             </button>
           </div>
-          <Stats stats={stats} />
           {!stats.projects.length ? (
             <section className="welcome-panel">
               <div>
-                <p className="eyebrow">A good place to start</p>
-                <h2>Your next project belongs here.</h2>
+                <p className="eyebrow">Your trail starts here</p>
+                <h2>Big ideas start with a little work.</h2>
                 <p>
-                  Connect VS Code, keep working as usual, and watch your project take shape. The
-                  tracker works offline and syncs when you are back.
+                  Connect your editor and build something you care about. HackTrail keeps a record
+                  of the work along the way, even when you’re offline.
                 </p>
                 <button className="primary" onClick={() => navigate('/connections')}>
-                  Connect your editor
-                  <Icon name="arrow" />
+                  <Icon name="connect" /> Connect your editor
                 </button>
               </div>
-              <div className="setup-steps">
-                <div>
-                  <span>1</span>Install the HackTrail extension
-                </div>
-                <div>
-                  <span>2</span>Choose what to collect
-                </div>
-                <div>
-                  <span>3</span>Approve your account connection
-                </div>
-              </div>
+              <ol className="setup-steps">
+                <li>
+                  <span>
+                    <Icon name="download" />
+                  </span>
+                  Install the VS Code extension
+                </li>
+                <li>
+                  <span>
+                    <Icon name="shield" />
+                  </span>
+                  Choose what to collect
+                </li>
+                <li>
+                  <span>
+                    <Icon name="connect" />
+                  </span>
+                  Connect your account
+                </li>
+              </ol>
             </section>
           ) : null}
-          <section className="panel">
-            <div className="section-heading">
-              <div>
-                <h2>Your rhythm</h2>
-                <p className="small muted">
-                  Editor activity · {profile.timezone.replaceAll('_', ' ')}
-                </p>
-              </div>
-              <span className="small muted">{durationLabel(stats.totalMs)} this period</span>
-            </div>
-            <WeekChart daily={stats.daily} />
-            {profile.dailyGoalMinutes > 0 && (
-              <div className="goal-row">
-                <span>Today’s goal</span>
-                <progress
-                  max={profile.dailyGoalMinutes * 60_000}
-                  value={stats.daily.at(-1)?.totalMs ?? 0}
-                  aria-label="Today's goal progress"
-                />
-                <span className="small muted">
-                  {durationLabel(stats.daily.at(-1)?.totalMs ?? 0)} /{' '}
-                  {durationLabel(profile.dailyGoalMinutes * 60_000)}
+          <Stats stats={stats} />
+          <div className="rhythm-layout">
+            <section className="panel rhythm-panel">
+              <div className="section-heading">
+                <div>
+                  <h2>Your rhythm</h2>
+                  <p className="small muted">
+                    Editor activity · {profile.timezone.replaceAll('_', ' ')}
+                  </p>
+                </div>
+                <span className="chart-legend">
+                  <span />
+                  Editor time
                 </span>
               </div>
-            )}
-          </section>
-          <div className="two-columns">
-            <Breakdown title="Languages" values={stats.languages} />
-            <Breakdown title="Editors" values={stats.editors} />
+              <WeekChart daily={stats.daily} />
+            </section>
+            <DailyGoal
+              minutes={profile.dailyGoalMinutes}
+              totalMs={stats.daily.at(-1)?.totalMs ?? 0}
+              onSettings={() => navigate('/settings')}
+            />
           </div>
-          <section className="panel">
-            <div className="section-heading">
-              <h2>Projects in progress</h2>
-              <button className="text-button" onClick={() => navigate('/projects')}>
-                All projects
-                <Icon name="arrow" />
-              </button>
+          <div className="work-layout">
+            <section className="panel projects-panel">
+              <div className="section-heading">
+                <div>
+                  <h2>On your workbench</h2>
+                  <p className="small muted">Projects in progress</p>
+                </div>
+                <button className="text-button" onClick={() => navigate('/projects')}>
+                  All projects
+                </button>
+              </div>
+              {stats.projects.some((project) => !project.archived) ? (
+                <ProjectRows
+                  projects={stats.projects.filter((project) => !project.archived).slice(0, 6)}
+                  onOpen={(id) => navigate('/projects/' + id)}
+                />
+              ) : (
+                <div className="projects-placeholder">
+                  <Icon name="folder" width={32} height={32} />
+                  <h3>
+                    {stats.projects.length
+                      ? 'Room for your next idea.'
+                      : 'Your work will find a home here.'}
+                  </h3>
+                  <p className="muted">Projects appear automatically when activity syncs.</p>
+                </div>
+              )}
+            </section>
+            <div className="breakdown-stack">
+              <Breakdown title="Languages" values={stats.languages} />
+              <Breakdown title="Editors" values={stats.editors} />
             </div>
-            {stats.projects.length ? (
-              <ProjectRows
-                projects={stats.projects.filter((project) => !project.archived).slice(0, 6)}
-                onOpen={(id) => navigate('/projects/' + id)}
-              />
-            ) : (
-              <Empty title="Nothing recorded yet">
-                Your projects will appear automatically when activity syncs.
-              </Empty>
-            )}
-          </section>
+          </div>
           <p className="footnote">
             Editor activity and agent runtime describe different things. Overlap is included in
             both, so the clocks should not be added together. These totals are not program-approved
@@ -158,5 +181,77 @@ export function Overview({
         </>
       )}
     </>
+  );
+}
+
+function DailyGoal({
+  minutes,
+  totalMs,
+  onSettings,
+}: {
+  minutes: number;
+  totalMs: number;
+  onSettings: () => void;
+}) {
+  const goalMs = minutes * 60_000;
+  const progress = goalMs > 0 ? Math.min(100, Math.floor((totalMs / goalMs) * 100)) : 0;
+  return (
+    <section className="daily-goal">
+      <div className="section-heading">
+        <h2>A little every day</h2>
+        <Icon name="clock" />
+      </div>
+      <p className="small">Your personal editor time goal</p>
+      <div
+        className="goal-dial"
+        role="progressbar"
+        aria-label="Today's goal progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+        aria-valuetext={
+          goalMs ? durationLabel(totalMs) + ' of ' + durationLabel(goalMs) : 'No daily goal set'
+        }
+      >
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle className="goal-track" cx="60" cy="60" r="52" />
+          <circle
+            className="goal-progress"
+            cx="60"
+            cy="60"
+            r="52"
+            pathLength="100"
+            strokeDasharray="100"
+            strokeDashoffset={100 - progress}
+            strokeOpacity={progress > 0 ? 1 : 0}
+          />
+        </svg>
+        <span aria-hidden="true">
+          {goalMs > 0 ? (
+            <strong>
+              {progress}
+              <small>%</small>
+            </strong>
+          ) : (
+            <Icon name="clock" width={30} height={30} />
+          )}
+          <span>{goalMs > 0 ? 'of today’s goal' : 'No goal set'}</span>
+        </span>
+      </div>
+      <strong className="goal-total">
+        {durationLabel(totalMs)}
+        {goalMs > 0 && <span> / {durationLabel(goalMs)}</span>}
+      </strong>
+      <p className="small">
+        {goalMs === 0
+          ? 'Choose a goal that fits your day.'
+          : progress === 100
+            ? 'You reached your goal today.'
+            : 'One session at a time.'}
+      </p>
+      <button className="text-button" onClick={onSettings}>
+        {goalMs ? 'Adjust goal' : 'Set a daily goal'}
+      </button>
+    </section>
   );
 }

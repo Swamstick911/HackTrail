@@ -19,6 +19,8 @@ type IconName =
   | 'play'
   | 'note'
   | 'chevron'
+  | 'overlap'
+  | 'power'
   | 'check';
 const paths: Record<IconName, string[]> = {
   trail: ['M6 4v10a4 4 0 0 0 4 4h7', 'M14 14l4 4-4 4', 'M6 4h12v6H6'],
@@ -40,6 +42,8 @@ const paths: Record<IconName, string[]> = {
   note: ['M12 4H4v16h16v-8', 'M10 14l1-5L19 1l4 4-8 8z'],
   chevron: ['M9 5l7 7-7 7'],
   check: ['M5 12l4 4L19 6'],
+  overlap: ['M15 8a7 7 0 1 1-14 0 7 7 0 0 1 14 0', 'M23 16a7 7 0 1 1-14 0 7 7 0 0 1 14 0'],
+  power: ['M12 2v10', 'M6.3 5.4a9 9 0 1 0 11.4 0'],
 };
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }) {

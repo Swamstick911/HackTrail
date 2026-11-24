@@ -111,7 +111,7 @@ export function App() {
             <img src="/favicon.svg" alt="" width={32} height={32} />
             HackTrail
           </a>
-          <span className="sidebar-caption">YOUR WORKSPACE</span>
+          <span className="sidebar-caption">Workspace</span>
           <nav aria-label="Main navigation">
             {navigation.map((item) => (
               <a
@@ -166,7 +166,7 @@ export function App() {
                   })
                 }
               >
-                <Icon name="arrow" />
+                <Icon name="power" />
               </button>
             </div>
           </div>
@@ -179,13 +179,14 @@ export function App() {
           </a>
           <a className="button" href="/">
             Your workspace
-            <Icon name="arrow" />
           </a>
         </header>
       )}
       <main id="main" className="page">
         {action.error && <Notice error>{action.error}</Notice>}
-        {content}
+        <div className="page-content" key={path}>
+          {content}
+        </div>
         <footer className="page-footer">
           <span>Keep a trail of what you make.</span>
           <a href="https://github.com/Swamstick911/HackTrail" target="_blank" rel="noreferrer">

@@ -318,7 +318,6 @@ export function Reports({ navigate }: { navigate: (path: string) => void }) {
             action={
               <button className="primary" onClick={() => navigate('/projects')}>
                 Choose a project
-                <Icon name="arrow" />
               </button>
             }
           >

@@ -164,7 +164,6 @@ export function Projects({ navigate }: { navigate: (path: string) => void }) {
               {!search && (
                 <button className="text-button" onClick={() => navigate('/connections')}>
                   Connect an editor
-                  <Icon name="arrow" />
                 </button>
               )}
             </Empty>
@@ -225,10 +224,7 @@ function Activity({ id }: { id: string }) {
             <div className="actions">
               {cursor && <button onClick={() => setCursor(null)}>Newest activity</button>}
               {resource.data.nextCursor && (
-                <button onClick={() => setCursor(resource.data!.nextCursor)}>
-                  Older activity
-                  <Icon name="arrow" />
-                </button>
+                <button onClick={() => setCursor(resource.data!.nextCursor)}>Older activity</button>
               )}
             </div>
           </>
@@ -298,7 +294,6 @@ export function ProjectPage({ id, navigate }: { id: string; navigate: (path: str
         )}
         {data.demoUrl && (
           <a href={data.demoUrl} target="_blank" rel="noreferrer">
-            <Icon name="arrow" />
             Live project
           </a>
         )}

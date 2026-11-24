@@ -220,10 +220,7 @@ export function Settings({
             </div>
           </form>
         ) : (
-          <button onClick={() => setDeleting(true)}>
-            Delete account
-            <Icon name="arrow" />
-          </button>
+          <button onClick={() => setDeleting(true)}>Delete account</button>
         )}
       </section>
     </>

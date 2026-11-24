@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { Icon } from '../../web/src/icons.js';
 import { durationLabel } from '../../src/shared/tracking.js';
 import type { Dashboard } from '../../src/platform/analytics.js';
@@ -63,18 +63,27 @@ export function Empty({
 export function Stats({ stats }: { stats: Pick<Dashboard, 'totalMs' | 'agentMs' | 'overlapMs'> }) {
   return (
     <div className="stats-grid">
-      <div>
-        <p>Editor activity</p>
+      <div className="stat-primary">
+        <p>
+          <Icon name="clock" />
+          Editor activity
+        </p>
         <strong>{durationLabel(stats.totalMs)}</strong>
         <span>Time recorded while working</span>
       </div>
       <div>
-        <p>Agent runtime</p>
+        <p>
+          <Icon name="code" />
+          Agent runtime
+        </p>
         <strong>{durationLabel(stats.agentMs)}</strong>
         <span>Completed, observed agent runs</span>
       </div>
       <div>
-        <p>Time in common</p>
+        <p>
+          <Icon name="overlap" />
+          Time in common
+        </p>
         <strong>{durationLabel(stats.overlapMs)}</strong>
         <span>Already included in both clocks</span>
       </div>
@@ -82,35 +91,65 @@ export function Stats({ stats }: { stats: Pick<Dashboard, 'totalMs' | 'agentMs' 
   );
 }
 export function WeekChart({ daily }: { daily: Dashboard['daily'] }) {
-  const maximum = Math.max(60_000, ...daily.map((day) => day.totalMs));
+  const groupId = useId();
+  const [selectedDate, setSelectedDate] = useState('');
+  const [hoveredDate, setHoveredDate] = useState<string | null>(null);
+  const selected = daily.find((day) => day.date === selectedDate) ?? daily.at(-1);
+  const inspected = daily.find((day) => day.date === hoveredDate) ?? selected;
+  const maximum = Math.ceil(Math.max(60_000, ...daily.map((day) => day.totalMs)) / 60_000) * 60_000;
+  const dateLabel = (date: string, options: Intl.DateTimeFormatOptions) =>
+    new Date(date + 'T12:00:00Z').toLocaleDateString(undefined, { ...options, timeZone: 'UTC' });
+  if (!inspected) return <p className="panel-empty muted">No days in this period.</p>;
   return (
-    <div
-      className={'week-chart' + (daily.length > 7 ? ' month-chart' : '')}
-      role="img"
-      aria-label={
-        'Daily editor activity: ' +
-        daily.map((day) => day.date + ', ' + durationLabel(day.totalMs)).join('; ')
-      }
-    >
-      {daily.map((day) => (
-        <div className="day-column" key={day.date}>
-          <span className="day-value">{durationLabel(day.totalMs)}</span>
-          <div className="bar-track">
-            <div
-              className={'bar' + (day.totalMs ? '' : ' zero')}
-              style={{ height: Math.max(2, (day.totalMs / maximum) * 100) + '%' }}
-            />
-          </div>
-          <span className="day-label">
-            {new Date(day.date + 'T12:00:00Z').toLocaleDateString(
-              undefined,
-              daily.length > 7
-                ? { day: 'numeric', timeZone: 'UTC' }
-                : { weekday: 'short', timeZone: 'UTC' },
-            )}
-          </span>
+    <div className="activity-chart">
+      <div className="chart-readout">
+        <div>
+          <strong>{durationLabel(inspected.totalMs)}</strong>
+          <time dateTime={inspected.date}>
+            {dateLabel(inspected.date, { month: 'short', day: 'numeric' })}
+          </time>
         </div>
-      ))}
+        <span className="chart-hint">Select a day to explore</span>
+      </div>
+      <div className="chart-plot">
+        <div className="chart-axis" aria-hidden="true">
+          <span>{durationLabel(maximum)}</span>
+          <span>{durationLabel(maximum / 2)}</span>
+          <span>0</span>
+        </div>
+        <div className="chart-scroll">
+          <fieldset
+            className={'week-chart' + (daily.length > 7 ? ' month-chart' : '')}
+            onMouseLeave={() => setHoveredDate(null)}
+          >
+            <legend className="sr-only">Daily editor activity</legend>
+            {daily.map((day) => (
+              <label className="day-column" key={day.date}>
+                <input
+                  className="sr-only"
+                  type="radio"
+                  name={groupId}
+                  checked={selected?.date === day.date}
+                  onChange={() => setSelectedDate(day.date)}
+                  onFocus={() => setHoveredDate(null)}
+                  aria-label={
+                    dateLabel(day.date, { dateStyle: 'full' }) + ', ' + durationLabel(day.totalMs)
+                  }
+                />
+                <span className="bar-track" onMouseEnter={() => setHoveredDate(day.date)}>
+                  <span className="bar" style={{ height: (day.totalMs / maximum) * 100 + '%' }} />
+                </span>
+                <span className="day-label">
+                  {dateLabel(
+                    day.date,
+                    daily.length > 7 ? { day: 'numeric' } : { weekday: 'short' },
+                  )}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        </div>
+      </div>
     </div>
   );
 }
@@ -123,8 +162,11 @@ export function Breakdown({
 }) {
   const total = values.reduce((sum, item) => sum + item.totalMs, 0);
   return (
-    <section className="panel">
-      <h2>{title}</h2>
+    <section className="panel breakdown-panel">
+      <div className="section-heading">
+        <h2>{title}</h2>
+        <Icon name={title === 'Languages' ? 'code' : 'connect'} />
+      </div>
       {values.length ? (
         <ul className="breakdown">
           {values.slice(0, 8).map((item) => (
@@ -154,8 +196,11 @@ export function ProjectRows({
     <div className="project-rows">
       {projects.map((project) => (
         <div className="project-row" key={project.id}>
-          <span className="project-symbol">
-            <Icon name="folder" />
+          <span
+            className={'project-symbol project-color-' + (project.name.charCodeAt(0) % 4)}
+            aria-hidden="true"
+          >
+            {project.name.slice(0, 1).toUpperCase()}
           </span>
           <div className="project-info">
             {onOpen ? (
@@ -175,15 +220,6 @@ export function ProjectRows({
           </div>
           <span className="pill">{project.visibility}</span>
           <strong className="time-label">{durationLabel(project.totalMs)}</strong>
-          {onOpen && (
-            <button
-              className="icon-button"
-              aria-label={'Open ' + project.name}
-              onClick={() => onOpen(project.id)}
-            >
-              <Icon name="chevron" />
-            </button>
-          )}
         </div>
       ))}
     </div>
