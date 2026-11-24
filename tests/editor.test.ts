@@ -107,6 +107,36 @@ describe('VS Code adapter with the real time store', () => {
     ]);
   });
 
+  it('retains the idle cutoff tail through offline retry when typing resumes before a heartbeat', async () => {
+    offline = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    emit('selection', { kind: 1, textEditor: window.activeTextEditor });
+    await vi.advanceTimersByTimeAsync(122_000);
+    emit('selection', { kind: 2, textEditor: window.activeTextEditor });
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(store.tracking.export('project-one').totalMs).toBe(0);
+
+    offline = false;
+    window.state.focused = false;
+    emit('focus', { focused: false });
+    await vi.advanceTimersByTimeAsync(15_000);
+    const report = store.tracking.export('project-one');
+    expect(report.totalMs).toBe(128_000);
+    expect(report.slices.slice(-2)).toMatchObject([
+      {
+        startedAt: '2026-11-20T10:02:00.000Z',
+        endedAt: '2026-11-20T10:02:05.000Z',
+        signal: 'keyboard',
+      },
+      {
+        startedAt: '2026-11-20T10:02:07.000Z',
+        endedAt: '2026-11-20T10:02:15.000Z',
+        signal: 'mouse',
+      },
+    ]);
+    expect(state.get('queue')).toHaveLength(0);
+  });
+
   it('captures only the time before the window loses focus', async () => {
     emit('selection', { kind: 2, textEditor: window.activeTextEditor });
     await vi.advanceTimersByTimeAsync(5000);

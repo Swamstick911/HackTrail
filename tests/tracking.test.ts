@@ -27,6 +27,34 @@ describe('editor activity clock', () => {
     expect(clock.tick(3_600_000)).toBeNull();
     expect(clock.tick(3_615_000)).toBeNull();
   });
+  it('preserves the last active seconds when input resumes just after the idle cutoff', () => {
+    const clock = new ActivityClock(0);
+    clock.focus(0, true);
+    clock.input(5000, 'keyboard');
+    for (let now = 15_000; now <= 120_000; now += 15_000) clock.tick(now);
+    expect(clock.input(127_000, 'mouse')).toEqual({
+      start: 120_000,
+      end: 125_000,
+      signal: 'keyboard',
+    });
+    expect(clock.tick(135_000)).toEqual({
+      start: 127_000,
+      end: 135_000,
+      signal: 'mouse',
+    });
+  });
+  it('skips an unsampled sleep gap when the first wake event is new input', () => {
+    const clock = new ActivityClock(0);
+    clock.focus(0, true);
+    clock.input(5000, 'keyboard');
+    clock.tick(15_000);
+    expect(clock.input(3_600_000, 'mouse')).toBeNull();
+    expect(clock.tick(3_615_000)).toEqual({
+      start: 3_600_000,
+      end: 3_615_000,
+      signal: 'mouse',
+    });
+  });
   it('closes the interval on blur and requires input after refocus', () => {
     const clock = new ActivityClock(0);
     clock.focus(0, true);

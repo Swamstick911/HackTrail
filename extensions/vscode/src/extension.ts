@@ -737,9 +737,9 @@ export function activate(context: vscode.ExtensionContext) {
       )
         return;
       if (event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)
-        clock.input(Date.now(), 'keyboard');
+        remember(clock.input(Date.now(), 'keyboard'));
       if (event.kind === vscode.TextEditorSelectionChangeKind.Mouse)
-        clock.input(Date.now(), 'mouse');
+        remember(clock.input(Date.now(), 'mouse'));
       render();
     }),
   );

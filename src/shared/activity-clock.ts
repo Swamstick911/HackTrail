@@ -18,17 +18,19 @@ export class ActivityClock {
     this.cursor = now;
   }
 
-  input(now: number, signal: ActivityInterval['signal']) {
-    if (!this.focused) return;
+  input(now: number, signal: ActivityInterval['signal']): ActivityInterval | null {
+    if (!this.focused) return null;
+    let interval: ActivityInterval | null = null;
     if (
       now < this.cursor ||
       now - this.cursor > this.maxGapMs ||
       now - this.lastInput > this.idleAfterMs
     ) {
-      this.cursor = now;
+      interval = this.tick(now);
     }
     this.lastInput = now;
     this.signal = signal;
+    return interval;
   }
 
   focus(now: number, focused: boolean) {
