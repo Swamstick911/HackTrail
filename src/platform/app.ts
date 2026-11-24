@@ -16,8 +16,9 @@ import {
   syncSchema,
   rangeSchema,
 } from './contracts.js';
-import { dashboard } from './analytics.js';
+import { dashboard, dateRange } from './analytics.js';
 import { DeviceAuthorization } from './devices.js';
+import { WakaTimeReceiver } from './wakatime.js';
 import { createReport, previewReport, reportOptionsSchema, sharedReport } from './reports.js';
 
 interface PlatformOptions {
@@ -29,6 +30,7 @@ interface PlatformOptions {
   emailEnabled?: boolean;
   registrationOpen?: boolean;
   rateLimit?: number;
+  trustedProxies?: string[];
 }
 const daysSchema = z
   .object({
@@ -42,9 +44,14 @@ const daysSchema = z
 const codeSchema = z.string().regex(/^[A-Fa-f0-9]{10}$/);
 
 export function createPlatform(options: PlatformOptions) {
-  const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({
+    logger: false,
+    bodyLimit: 2 * 1024 * 1024,
+    trustProxy: options.trustedProxies ?? false,
+  });
   const { store, authentication, origin } = options;
   const devices = new DeviceAuthorization(store);
+  const wakaTime = new WakaTimeReceiver(store);
   app.register(rateLimit, { max: options.rateLimit ?? 300, timeWindow: '1 minute' });
 
   app.addHook('onRequest', async (request, reply) => {
@@ -163,7 +170,7 @@ export function createPlatform(options: PlatformOptions) {
     return reply.code(204).send();
   });
   app.get<{ Params: { id: string } }>('/api/projects/:id/work', async (request) => {
-    const owner = await account(request, 'read:stats');
+    const owner = await account(request);
     store.project(owner, request.params.id);
     const range = rangeSchema.parse(request.query);
     const activity = store.user(owner);
@@ -203,20 +210,18 @@ export function createPlatform(options: PlatformOptions) {
       .object({ text: z.string().trim().min(1).max(500) })
       .strict()
       .parse(request.body);
-    return store
-      .user(owner)
-      .ingest([
-        {
-          schemaVersion: 1,
-          id: randomUUID(),
-          projectId: request.params.id,
-          occurredAt: new Date().toISOString(),
-          source: 'manual',
-          actor: 'user',
-          kind: 'work_note',
-          metadata: { excerpt: input.text },
-        },
-      ]);
+    return store.user(owner).ingest([
+      {
+        schemaVersion: 1,
+        id: randomUUID(),
+        projectId: request.params.id,
+        occurredAt: new Date().toISOString(),
+        source: 'manual',
+        actor: 'user',
+        kind: 'work_note',
+        metadata: { excerpt: input.text },
+      },
+    ]);
   });
   app.post('/api/tracking/pause', async (request) =>
     store
@@ -226,6 +231,47 @@ export function createPlatform(options: PlatformOptions) {
   app.post('/api/sync', async (request) =>
     store.sync(await account(request, 'write:activity'), syncSchema.parse(request.body)),
   );
+  function heartbeatCredential(request: FastifyRequest) {
+    const authorization = request.headers.authorization ?? '';
+    if (authorization.startsWith('Bearer ')) return authorization.slice(7);
+    if (authorization.startsWith('Basic '))
+      return Buffer.from(authorization.slice(6), 'base64').toString('utf8').replace(/:$/, '');
+    throw new StoreError('A write:activity API key is required.', 401);
+  }
+  for (const bulk of [false, true])
+    app.post('/api/v1/users/current/heartbeats' + (bulk ? '.bulk' : ''), async (request, reply) => {
+      const credential = heartbeatCredential(request);
+      const owner = store.key(credential, 'write:activity');
+      const input = bulk ? z.array(z.unknown()).min(1).max(25).parse(request.body) : [request.body];
+      const headers = {
+        machine:
+          typeof request.headers['x-machine-name'] === 'string'
+            ? request.headers['x-machine-name'].slice(0, 512)
+            : undefined,
+        userAgent: request.headers['user-agent']?.slice(0, 512),
+      };
+      if (!bulk)
+        return reply
+          .code(202)
+          .send({ data: wakaTime.receive(owner, credential, input[0], headers) });
+      const responses = input.map((item) => {
+        try {
+          return [{ data: wakaTime.receive(owner, credential, item, headers) }, 202];
+        } catch (error) {
+          if (error instanceof StoreError) return [{ error: error.message }, error.statusCode];
+          if (error instanceof z.ZodError) return [{ error: 'Invalid heartbeat.' }, 400];
+          throw error;
+        }
+      });
+      return reply.code(201).send({ responses });
+    });
+  app.delete('/api/devices/current', async (request, reply) => {
+    const token = request.headers.authorization?.startsWith('Bearer ')
+      ? request.headers.authorization.slice(7)
+      : '';
+    store.revokeDevice(token);
+    return reply.code(204).send();
+  });
   app.get('/api/keys', async (request) => store.listKeys(await account(request)));
   app.post('/api/keys', async (request, reply) => {
     const owner = await account(request);
@@ -291,9 +337,17 @@ export function createPlatform(options: PlatformOptions) {
   app.post<{ Params: { id: string } }>('/api/projects/:id/reports', async (request, reply) => {
     const owner = await account(request);
     const input = reportOptionsSchema
-      .extend({ expiresInDays: z.number().int().min(1).max(30) })
+      .extend({
+        expiresInDays: z.number().int().min(1).max(30),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      })
       .parse(request.body);
-    const { expiresInDays, ...reportOptions } = input;
+    const { expiresInDays, fingerprint, ...reportOptions } = input;
+    if (previewReport(store, owner, request.params.id, reportOptions).fingerprint !== fingerprint)
+      throw new StoreError(
+        'Activity changed since your preview. Preview the report again before sharing.',
+        409,
+      );
     const result = createReport(store, owner, request.params.id, reportOptions, expiresInDays);
     return reply.code(201).send({ ...result, url: origin + '/reports/' + result.token });
   });
@@ -343,24 +397,34 @@ export function createPlatform(options: PlatformOptions) {
     };
   });
   app.get('/api/public/community', async () => {
-    const profiles = store.database
+    const range = dateRange(7, 'UTC');
+    const rows = store.database
       .prepare(
-        "SELECT payload FROM profiles WHERE json_extract(payload, '$.isPublic') = 1 AND json_extract(payload, '$.leaderboard') = 1 ORDER BY handle LIMIT 100",
+        `
+      SELECT f.payload, COUNT(DISTINCT p.id) AS projects,
+        COALESCE(SUM(CASE WHEN s.id IS NULL THEN 0 ELSE MIN(s.end, ?) - MAX(s.start, ?) END), 0) AS total_ms
+      FROM profiles f
+      LEFT JOIN projects p ON p.scope_id = f.id AND p.id IN (SELECT project_id FROM project_details WHERE json_extract(payload, '$.visibility') = 'public')
+      LEFT JOIN time_slices s ON s.project_id = p.id AND s.start < ? AND s.end > ?
+      WHERE json_extract(f.payload, '$.isPublic') = 1 AND json_extract(f.payload, '$.leaderboard') = 1
+      GROUP BY f.id ORDER BY total_ms DESC, f.handle LIMIT 100
+    `,
       )
-      .all() as { payload: string }[];
-    return profiles
-      .map((row) => {
-        const profile = JSON.parse(row.payload) as ReturnType<PlatformStore['profile']>;
-        const stats = dashboard(store, profile.id, 7, { publicOnly: true, timezone: 'UTC' });
-        return {
-          handle: profile.handle,
-          name: profile.name,
-          bio: profile.bio,
-          totalMs: stats.totalMs,
-          projects: stats.projects.length,
-        };
-      })
-      .sort((a, b) => b.totalMs - a.totalMs || a.handle.localeCompare(b.handle));
+      .all(range.to, range.from, range.to, range.from) as {
+      payload: string;
+      projects: number;
+      total_ms: number;
+    }[];
+    return rows.map((row) => {
+      const profile = JSON.parse(row.payload) as ReturnType<PlatformStore['profile']>;
+      return {
+        handle: profile.handle,
+        name: profile.name,
+        bio: profile.bio,
+        totalMs: row.total_ms,
+        projects: row.projects,
+      };
+    });
   });
   app.get('/api/integrations/vscode', async (_request, reply) => {
     if (!options.extensionPath || !existsSync(options.extensionPath))

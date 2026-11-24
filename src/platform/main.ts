@@ -62,6 +62,9 @@ const app = createPlatform({
   authentication,
   origin,
   emailEnabled: Boolean(smtpUrl),
+  trustedProxies: process.env.HACKTRAIL_TRUST_PROXY?.split(',')
+    .map((address) => address.trim())
+    .filter(Boolean),
   registrationOpen: process.env.HACKTRAIL_REGISTRATION_OPEN !== 'false',
   webRoot: resolve(here, '../platform-web'),
   extensionPath: resolve(here, '../../releases/hacktrail.vsix'),

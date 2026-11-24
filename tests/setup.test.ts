@@ -43,6 +43,7 @@ describe('automatic workspace setup', () => {
 
   beforeEach(() => {
     resetEditor();
+    vi.spyOn(window, 'showQuickPick').mockImplementation(async (items) => items);
     ensure.mockReset().mockResolvedValue(undefined);
     runtime.mockReset().mockResolvedValue(process.execPath);
     directory = mkdtempSync(join(tmpdir(), 'hacktrail-setup-'));

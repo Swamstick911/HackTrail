@@ -35,6 +35,7 @@ export async function createAuthentication(options: AuthOptions) {
     trustedOrigins: [options.origin],
     emailAndPassword: {
       enabled: true,
+      requireEmailVerification: Boolean(mail),
       disableSignUp: options.registrationOpen === false,
       minPasswordLength: 12,
       maxPasswordLength: 128,
@@ -46,6 +47,8 @@ export async function createAuthentication(options: AuthOptions) {
     emailVerification: mail
       ? {
           sendOnSignUp: true,
+          sendOnSignIn: true,
+          autoSignInAfterVerification: true,
           sendVerificationEmail: async ({ user, url }) =>
             send(user.email, 'Verify your HackTrail email', url),
         }

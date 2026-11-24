@@ -45,12 +45,14 @@ export interface TimelineQuery {
 
 export class ActivityStore {
   readonly database: Database;
+  private ownsDatabase: boolean;
   readonly tracking: TrackingStore;
 
   constructor(
     filePath: string | Database,
     readonly scopeId = 'local',
   ) {
+    this.ownsDatabase = typeof filePath === 'string';
     this.database = typeof filePath === 'string' ? new Database(filePath) : filePath;
     if (typeof filePath !== 'string') {
       this.tracking = new TrackingStore(this.database, scopeId, false);
@@ -87,7 +89,7 @@ export class ActivityStore {
   }
 
   close() {
-    this.database.close();
+    if (this.ownsDatabase) this.database.close();
   }
 
   listProjects(): Project[] {

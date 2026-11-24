@@ -10,6 +10,14 @@ import { connectClaude } from '../../../src/integrations/claude.js';
 import { connectCodex } from '../../../src/integrations/codex.js';
 import { observeGit } from '../../../src/integrations/git.js';
 import { CollectorManager, defaultCollectorUrl } from './collector.js';
+import {
+  beginConnection,
+  platformOrigin,
+  platformRequest,
+  PlatformError,
+  syncBatch,
+  type SyncConnection,
+} from './platform-client.js';
 
 interface Connection {
   projectId: string;
@@ -23,6 +31,15 @@ export function activate(context: vscode.ExtensionContext) {
   if (!vscode.workspace.isTrusted) return;
   const collector = new CollectorManager(context.extensionPath, context.globalStorageUri?.fsPath);
   let settingUp = false;
+  let platform = context.workspaceState.get<SyncConnection>('platform');
+  const syncHistory = context.workspaceState.get<Record<string, SyncConnection>>('syncHistory', {});
+  const historyKey = (value: Pick<SyncConnection, 'origin' | 'accountId' | 'projectId'>) =>
+    createHash('sha256')
+      .update(JSON.stringify([value.origin, value.accountId, value.projectId]))
+      .digest('hex');
+  let syncingPlatform = false;
+  let connectingPlatform = false;
+  let platformStatus = platform ? 'Waiting to sync' : 'Local only';
   let welcomeTimer: ReturnType<typeof setTimeout> | undefined;
   let lastRestartAttempt = 0;
   let connection = context.workspaceState.get<Connection>('connection');
@@ -67,6 +84,8 @@ export function activate(context: vscode.ExtensionContext) {
       startedAt: new Date(interval.start).toISOString(),
       endedAt: new Date(interval.end).toISOString(),
       signal: interval.signal,
+      language: vscode.window.activeTextEditor?.document.languageId,
+      editor: vscode.env.appName.slice(0, 80),
       git: gitContext,
     });
     persist();
@@ -113,7 +132,8 @@ export function activate(context: vscode.ExtensionContext) {
       ? connection.projectName +
         '\n' +
         queue.length +
-        ' samples waiting to sync. Click to pause or resume.'
+        ' samples waiting for the local collector. Click to pause or resume.\n' +
+        platformStatus
       : 'Enable tracking for this workspace.';
     status.command = connection ? 'hacktrail.toggleTracking' : 'hacktrail.connect';
   }
@@ -184,11 +204,184 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
       online = true;
+      void syncPlatform();
     } catch {
       online = false;
     } finally {
       flushing = false;
       render();
+    }
+  }
+
+  async function syncPlatform() {
+    if (!platform || !client || syncingPlatform || platform.projectId !== connection?.projectId)
+      return;
+    syncingPlatform = true;
+    const selected = platform;
+    let pending = selected;
+    try {
+      const token = await context.secrets.get('platform:' + selected.deviceId);
+      if (!token) throw new Error('Reconnect this workspace to your HackTrail account.');
+      for (let page = 0; page < 5; page++) {
+        const result = await syncBatch(client, pending, token, async (saved) => {
+          if (platform !== selected) throw new Error('Connection changed.');
+          pending = saved;
+          syncHistory[historyKey(saved)] = saved;
+          await context.workspaceState.update('syncHistory', syncHistory);
+        });
+        if (platform !== selected) return;
+        pending = result.connection;
+        syncHistory[historyKey(pending)] = pending;
+        await context.workspaceState.update('syncHistory', syncHistory);
+        platformStatus = result.paused
+          ? 'Platform paused'
+          : result.hasMore
+            ? 'Syncing queued activity'
+            : 'Synced to @' + pending.handle;
+        if (!result.hasMore) break;
+      }
+    } catch (error) {
+      platformStatus =
+        error instanceof PlatformError && [401, 403, 410].includes(error.status)
+          ? message(error) + ' Use HackTrail: Connect Account to reconnect.'
+          : 'Platform offline. Local tracking continues; sync will retry.';
+    } finally {
+      if (platform === selected) {
+        platform = pending;
+        await context.workspaceState.update('platform', pending);
+      }
+      syncingPlatform = false;
+      render();
+    }
+  }
+
+  async function revokeConnection(previous: SyncConnection) {
+    let revoked = false;
+    try {
+      const token = await context.secrets.get('platform:' + previous.deviceId);
+      if (token)
+        await platformRequest(previous.origin, '/devices/current', undefined, token, 'DELETE');
+      revoked = true;
+    } catch (error) {
+      revoked = error instanceof PlatformError && error.status === 401;
+    } finally {
+      await context.secrets.delete('platform:' + previous.deviceId);
+    }
+    return revoked;
+  }
+
+  async function connectPlatform(suggestedOrigin?: string) {
+    if (connectingPlatform) return;
+    if (!connection || !client) {
+      await setup();
+      if (!connection || !client) return;
+    }
+    connectingPlatform = true;
+    try {
+      const value = await vscode.window.showInputBox({
+        title: 'Connect your HackTrail account',
+        prompt: 'Platform address. This workspace will sync up to the last seven days of activity.',
+        value: suggestedOrigin ?? platform?.origin ?? 'http://127.0.0.1:47657',
+        ignoreFocusOut: true,
+      });
+      if (!value) return;
+      const origin = platformOrigin(value);
+      const choices = await vscode.window.showQuickPick(
+        [
+          {
+            label: 'Agent activity',
+            description: 'Agent start/stop times, tool names, and outcomes. No prompts or output.',
+            key: 'agents',
+          },
+          {
+            label: 'Git context',
+            description:
+              'Commit IDs, branch names, and change counts. No source code or file paths.',
+            key: 'git',
+          },
+        ],
+        {
+          title: 'What else should sync with editor time?',
+          placeHolder: 'Leave both unchecked to sync only editor time, language, and editor name.',
+          canPickMany: true,
+          ignoreFocusOut: true,
+        },
+      );
+      if (!choices) return;
+      const selected = connection;
+      const approved = await vscode.window.showInformationMessage(
+        'Sync ' + selected.projectName + ' to ' + origin + '?',
+        {
+          modal: true,
+          detail:
+            'The project starts private. Your browser will ask you to approve this editor. Local notes and conversation text stay on this computer. New choices apply to future batches; a saved batch awaiting acknowledgement keeps its earlier choices. Pausing local tracking and disconnecting sync are separate controls.',
+        },
+        'Connect account',
+      );
+      if (!approved) return;
+      const result = await beginConnection(origin, vscode.env.appName.slice(0, 60) + ' workspace');
+      await vscode.env.openExternal(
+        await vscode.env.asExternalUri(vscode.Uri.parse(result.verificationUrl)),
+      );
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Approve code ' + result.userCode + ' in your browser',
+          cancellable: true,
+        },
+        async (_progress, cancellation) => {
+          const expiresAt = Date.now() + Math.min(result.expiresIn, 600) * 1000;
+          while (!cancellation.isCancellationRequested && Date.now() < expiresAt) {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            if (cancellation.isCancellationRequested) return;
+            const approval = await platformRequest<{
+              status: 'pending' | 'approved';
+              token?: string;
+              deviceId?: string;
+              accountId?: string;
+              handle?: string;
+            }>(origin, '/devices/poll', {
+              deviceCode: result.deviceCode,
+              verifier: result.verifier,
+            });
+            if (approval.status !== 'approved') continue;
+            if (!approval.token || !approval.deviceId || !approval.handle || !approval.accountId)
+              throw new Error('Incomplete connection response.');
+            if (connection !== selected)
+              throw new Error('The selected project changed. Connect it again.');
+            const previous = platform;
+            const history =
+              syncHistory[
+                historyKey({ origin, accountId: approval.accountId, projectId: selected.projectId })
+              ];
+            await context.secrets.store('platform:' + approval.deviceId, approval.token);
+            platform = {
+              origin,
+              deviceId: approval.deviceId,
+              accountId: approval.accountId,
+              handle: approval.handle,
+              projectId: selected.projectId,
+              includeGit: choices.some((choice) => choice.key === 'git'),
+              includeAgents: choices.some((choice) => choice.key === 'agents'),
+              cursor: history?.cursor ?? 0,
+              pending: history?.pending,
+            };
+            await context.workspaceState.update('platform', platform);
+            if (previous) await revokeConnection(previous);
+            await syncPlatform();
+            void vscode.window.showInformationMessage(
+              'HackTrail account connected. This project is private until you publish it in the platform.',
+            );
+            return;
+          }
+          if (!cancellation.isCancellationRequested)
+            throw new Error('The connection expired. Run Connect Account to try again.');
+        },
+      );
+    } catch (error) {
+      void vscode.window.showErrorMessage(message(error));
+    } finally {
+      connectingPlatform = false;
     }
   }
 
@@ -222,6 +415,38 @@ export function activate(context: vscode.ExtensionContext) {
       );
       await context.workspaceState.update('setupSeen', true);
       if (!choice) return;
+      const collection =
+        choice === 'Enable tracking'
+          ? await vscode.window.showQuickPick(
+              [
+                {
+                  label: 'Git checkpoints',
+                  description: 'Commit IDs, branches, and change counts',
+                  key: 'git',
+                  picked: true,
+                },
+                {
+                  label: 'Claude Code activity',
+                  description: 'Tool names, outcomes, and agent runtime',
+                  key: 'claude',
+                  picked: true,
+                },
+                {
+                  label: 'Codex activity',
+                  description: 'Tool names, outcomes, and agent runtime; requires /hooks trust',
+                  key: 'codex',
+                  picked: true,
+                },
+              ],
+              {
+                canPickMany: true,
+                title: 'Choose what HackTrail collects locally',
+                ignoreFocusOut: true,
+              },
+            )
+          : [];
+      if (!collection) return;
+      const collects = (source: string) => collection.some((item) => item.key === source);
       let claudeReady = false;
       let codexReady = false;
       await vscode.window.withProgress(
@@ -258,13 +483,15 @@ export function activate(context: vscode.ExtensionContext) {
           await context.workspaceState.update('connection', connection);
           await context.workspaceState.update('enabled', true);
           await context.workspaceState.update('evidenceSetupSeen', true);
-          await context.workspaceState.update('gitEnabled', choice === 'Enable tracking');
-          await context.workspaceState.update('claudeEnabled', choice === 'Enable tracking');
-          await context.workspaceState.update('codexEnabled', choice === 'Enable tracking');
+          await context.workspaceState.update('gitEnabled', collects('git'));
+          await context.workspaceState.update('claudeEnabled', collects('claude'));
+          await context.workspaceState.update('codexEnabled', collects('codex'));
           if (choice === 'Enable tracking') {
             try {
-              await installAgent('claude', report);
-              claudeReady = true;
+              if (collects('claude')) {
+                await installAgent('claude', report);
+                claudeReady = true;
+              } else await removeAgent('claude');
             } catch (error) {
               void vscode.window.showWarningMessage(
                 'Editor tracking is ready, but Claude setup needs attention: ' +
@@ -273,8 +500,10 @@ export function activate(context: vscode.ExtensionContext) {
               );
             }
             try {
-              await installAgent('codex', report);
-              codexReady = true;
+              if (collects('codex')) {
+                await installAgent('codex', report);
+                codexReady = true;
+              } else await removeAgent('codex');
             } catch (error) {
               void vscode.window.showWarningMessage(
                 'Editor tracking is ready, but Codex setup needs attention: ' +
@@ -397,6 +626,27 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('hacktrail.connect', () => setup()),
+    vscode.commands.registerCommand('hacktrail.connectAccount', () => connectPlatform()),
+    vscode.commands.registerCommand('hacktrail.disconnectAccount', async () => {
+      if (!platform) return;
+      const previous = platform;
+      platform = undefined;
+      await context.workspaceState.update('platform', undefined);
+      const revoked = await revokeConnection(previous);
+      platformStatus = 'Local only';
+      render();
+      void vscode.window.showInformationMessage(
+        revoked
+          ? 'Account sync disconnected and device access revoked. Local tracking continues.'
+          : 'Account sync disconnected locally. The server could not be reached; revoke this device in platform Connections when online.',
+      );
+    }),
+    vscode.commands.registerCommand('hacktrail.openPlatform', async () => {
+      if (!platform) return connectPlatform();
+      await vscode.env.openExternal(
+        await vscode.env.asExternalUri(vscode.Uri.parse(platform.origin)),
+      );
+    }),
     ...(['claude', 'codex'] as const).map((adapter) =>
       vscode.commands.registerCommand(
         adapter === 'claude' ? 'hacktrail.disableClaude' : 'hacktrail.disableCodex',
@@ -422,6 +672,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.window.registerUriHandler({
       handleUri: async (uri) => {
+        if (uri.path === '/account') {
+          const origin = new URLSearchParams(uri.query).get('origin');
+          if (origin) await connectPlatform(origin);
+          return;
+        }
         if (uri.path !== '/enable') return;
         clearTimeout(welcomeTimer);
         if (settingUp) {

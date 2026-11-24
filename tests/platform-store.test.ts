@@ -238,17 +238,15 @@ describe('published statistics and evidence', () => {
   });
   it('previews explicit note disclosure and never exposes imported excerpts', () => {
     const { projectId } = store.sync('alice', sync());
-    store
-      .user('alice')
-      .ingest([
-        event('event-agent', projectId, -10_000),
-        {
-          ...event('note-one', projectId, -5000, 'work_note'),
-          source: 'manual',
-          actor: 'user',
-          metadata: { excerpt: 'My explanation' },
-        },
-      ]);
+    store.user('alice').ingest([
+      event('event-agent', projectId, -10_000),
+      {
+        ...event('note-one', projectId, -5000, 'work_note'),
+        source: 'manual',
+        actor: 'user',
+        metadata: { excerpt: 'My explanation' },
+      },
+    ]);
     const options = {
       range: { from: instant(-60_000), to: instant(0) },
       includeGit: false,
@@ -280,4 +278,27 @@ describe('published statistics and evidence', () => {
     store.database.prepare('DELETE FROM shared_reports WHERE id = ?').run(report.id);
     expect(() => sharedReport(store, report.token)).toThrow('revoked');
   });
+});
+
+it('shares only outside boundaries needed by a crossing run', () => {
+  const { projectId } = store.sync('alice', sync());
+  store.user('alice').ingest([
+    { ...event('earlier-start', projectId, -200_000), metadata: { sessionId: 'earlier' } },
+    {
+      ...event('earlier-stop', projectId, -190_000, 'agent_stopped'),
+      metadata: { sessionId: 'earlier' },
+    },
+    { ...event('crossing-start', projectId, -90_000), metadata: { sessionId: 'crossing' } },
+    {
+      ...event('crossing-stop', projectId, -20_000, 'agent_stopped'),
+      metadata: { sessionId: 'crossing' },
+    },
+  ]);
+  const report = previewReport(store, 'alice', projectId, {
+    range: { from: instant(-60_000), to: instant(0) },
+    includeGit: false,
+    includeNotes: false,
+  });
+  expect(report.events.map((item) => item.id)).toEqual(['crossing-start', 'crossing-stop']);
+  expect(report.review.agentMs).toBe(40_000);
 });

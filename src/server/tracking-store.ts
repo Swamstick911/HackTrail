@@ -205,6 +205,55 @@ export class TrackingStore {
     };
   }
 
+  rebuild(from: number, to: number) {
+    if (to <= from) return;
+    this.database.transaction(() => {
+      const rows = this.database
+        .prepare(
+          'SELECT s.* FROM time_slices s JOIN projects p ON p.id = s.project_id WHERE p.scope_id = ? AND s.start < ? AND s.end > ?',
+        )
+        .all(this.scopeId, to, from) as {
+        id: number;
+        sample_id: string;
+        project_id: string;
+        start: number;
+        end: number;
+      }[];
+      const insert = this.database.prepare(
+        'INSERT INTO time_slices(sample_id, project_id, start, end) VALUES (?, ?, ?, ?)',
+      );
+      for (const row of rows) {
+        this.database.prepare('DELETE FROM time_slices WHERE id = ?').run(row.id);
+        if (row.start < from) insert.run(row.sample_id, row.project_id, row.start, from);
+        if (row.end > to) insert.run(row.sample_id, row.project_id, to, row.end);
+      }
+      const samples = this.database
+        .prepare(
+          "SELECT t.payload FROM time_samples t JOIN projects p ON p.id = t.project_id WHERE p.scope_id = ? AND json_extract(t.payload, '$.startedAt') < ? AND json_extract(t.payload, '$.endedAt') > ? ORDER BY json_extract(t.payload, '$.signal') = 'heartbeat', t.rowid",
+        )
+        .all(this.scopeId, new Date(to).toISOString(), new Date(from).toISOString()) as {
+        payload: string;
+      }[];
+      const exclusions = this.database
+        .prepare(
+          'SELECT start, COALESCE(end, ?) AS end FROM tracking_pauses WHERE scope_id = ? AND start < ? AND (end IS NULL OR end > ?)',
+        )
+        .all(to, this.scopeId, to, from) as unknown as Range[];
+      for (const row of samples) {
+        const sample = JSON.parse(row.payload) as TimeSample;
+        const range = {
+          start: Math.max(from, Date.parse(sample.startedAt)),
+          end: Math.min(to, Date.parse(sample.endedAt)),
+        };
+        const slices = subtractRanges(range, exclusions);
+        for (const slice of slices) {
+          insert.run(sample.id, sample.projectId, slice.start, slice.end);
+          exclusions.push(slice);
+        }
+      }
+    })();
+  }
+
   export(projectId: string) {
     const owned = this.database
       .prepare('SELECT id FROM projects WHERE id = ? AND scope_id = ?')

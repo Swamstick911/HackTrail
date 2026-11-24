@@ -54,6 +54,18 @@
       {
         "command": "hacktrail.disableGit",
         "title": "HackTrail: Disable Git Collection"
+      },
+      {
+        "command": "hacktrail.connectAccount",
+        "title": "HackTrail: Connect Account"
+      },
+      {
+        "command": "hacktrail.disconnectAccount",
+        "title": "HackTrail: Disconnect Account"
+      },
+      {
+        "command": "hacktrail.openPlatform",
+        "title": "HackTrail: Open Platform"
       }
     ]
   }

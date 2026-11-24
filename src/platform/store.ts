@@ -188,6 +188,11 @@ export class PlatformStore {
     return row.owner_id;
   }
 
+  revokeDevice(token: string) {
+    this.key(token, 'write:activity');
+    this.database.prepare('DELETE FROM credentials WHERE token_hash = ?').run(digest(token));
+  }
+
   listKeys(owner: string) {
     const rows = this.database
       .prepare(

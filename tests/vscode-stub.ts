@@ -27,7 +27,9 @@ export const workspace = {
 };
 export const window = {
   state: { focused: true },
-  activeTextEditor: { document: { uri: 'file:///private/project/code.ts' } },
+  activeTextEditor: {
+    document: { uri: 'file:///private/project/code.ts', languageId: 'typescript' },
+  },
   createStatusBarItem: () => ({ text: '', tooltip: '', command: '', show() {}, dispose() {} }),
   onDidChangeWindowState: subscribe('focus'),
   onDidChangeActiveTextEditor: subscribe('editor'),
@@ -35,7 +37,7 @@ export const window = {
   showInformationMessage: async (..._args: unknown[]): Promise<string | undefined> => undefined,
   showErrorMessage: async (..._args: unknown[]) => undefined,
   showInputBox: async () => undefined,
-  showQuickPick: async () => undefined,
+  showQuickPick: async (_items: unknown[], _options?: unknown): Promise<any> => undefined,
   showWorkspaceFolderPick: async () => undefined,
   showWarningMessage: async (..._args: unknown[]) => undefined,
   registerUriHandler: subscribe('uriHandler'),

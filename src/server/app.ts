@@ -10,6 +10,7 @@ import { importClaude, maxImportBytes } from './claude-import.js';
 import { seedExample } from './example.js';
 import { ActivityStore, StoreError } from './store.js';
 import { heartbeatSchema } from '../shared/tracking.js';
+import { SyncReader } from './sync-reader.js';
 
 interface AppOptions {
   store: ActivityStore;
@@ -38,6 +39,7 @@ function validToken(value: unknown, expected: string) {
 }
 
 export function createApp(options: AppOptions) {
+  const sync = new SyncReader(options.store);
   const app = Fastify({ logger: false, bodyLimit: 24 * 1024 * 1024 });
   const origins = new Set(['http://127.0.0.1:' + options.port, 'http://localhost:' + options.port]);
   if (options.development) origins.add('http://127.0.0.1:5173');
@@ -104,6 +106,17 @@ export function createApp(options: AppOptions) {
   }));
   app.get('/api/session', async () => ({ token: options.token }));
   app.get('/api/projects', async () => options.store.listProjects());
+  app.get<{ Params: { id: string } }>('/api/projects/:id/sync', async (request) => {
+    const query = z
+      .object({
+        cursor: z.coerce.number().int().nonnegative().default(0),
+        includeGit: z.enum(['true', 'false']).transform((value) => value === 'true'),
+        includeAgents: z.enum(['true', 'false']).transform((value) => value === 'true'),
+      })
+      .strict()
+      .parse(request.query);
+    return sync.batch(request.params.id, query);
+  });
   app.post('/api/workspaces/resolve', async (request) => {
     const input = z
       .object({

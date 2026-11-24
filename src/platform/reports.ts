@@ -16,6 +16,52 @@ export const reportOptionsSchema = z
   .strict();
 export type ReportOptions = z.infer<typeof reportOptionsSchema>;
 
+function selectedEvents(events: ActivityEvent[], from: number, to: number) {
+  const selected = new Set(
+    events
+      .filter((event) => {
+        const time = Date.parse(event.occurredAt);
+        return time >= from && time < to;
+      })
+      .map((event) => event.id),
+  );
+  const open = new Map<string, ActivityEvent>();
+  const finished = new Set<string>();
+  for (const event of [...events].sort(
+    (a, b) =>
+      a.occurredAt.localeCompare(b.occurredAt) ||
+      Number(b.kind === 'agent_started') - Number(a.kind === 'agent_started') ||
+      a.id.localeCompare(b.id),
+  )) {
+    if (!event.metadata.sessionId) continue;
+    const key = JSON.stringify([
+      event.projectId,
+      event.source,
+      event.metadata.sessionId,
+      event.metadata.turnId ?? '',
+    ]);
+    if (event.kind === 'agent_started') {
+      open.set(key, event);
+      finished.delete(key);
+    }
+    if (event.kind !== 'agent_stopped') continue;
+    const start = open.get(key);
+    if (!start && event.metadata.hook === 'SessionEnd' && finished.has(key))
+      selected.delete(event.id);
+    if (start) {
+      const a = Date.parse(start.occurredAt);
+      const b = Date.parse(event.occurredAt);
+      if (b > from && a < to && b >= a && b - a <= maxAgentRunMs) {
+        selected.add(start.id);
+        selected.add(event.id);
+      }
+      finished.add(key);
+    }
+    open.delete(key);
+  }
+  return events.filter((event) => selected.has(event.id));
+}
+
 export function previewReport(
   store: PlatformStore,
   owner: string,
@@ -41,8 +87,11 @@ export function previewReport(
     ) as { payload: string }[];
   if (rows.length > 50_000) throw new StoreError('Choose a shorter period for this report.', 413);
   const events: ActivityEvent[] = [];
-  for (const row of rows) {
-    const event = JSON.parse(row.payload) as ActivityEvent;
+  for (const event of selectedEvents(
+    rows.map((row) => JSON.parse(row.payload) as ActivityEvent),
+    from,
+    to,
+  )) {
     const time = Date.parse(event.occurredAt);
     const outside = time < from || time >= to;
     if (outside && !['agent_started', 'agent_stopped'].includes(event.kind)) continue;
@@ -62,6 +111,7 @@ export function previewReport(
             sessionId: metadata.sessionId,
             turnId: metadata.turnId,
             interrupted: metadata.interrupted,
+            hook: metadata.hook,
           }
         : {
             ...metadata,
@@ -88,7 +138,7 @@ export function previewReport(
       git: options.includeGit,
       notes: options.includeNotes,
       boundaryContext:
-        'Start/stop metadata up to 12 hours outside the period can establish a crossing run. Counted time is clipped to the selected period.',
+        'Only start/stop boundaries needed for a crossing run are included from outside this period, up to 12 hours away. Counted time is clipped to the selected period.',
     },
     notice:
       'Observed activity is not verified authorship, productive-struggle time, or program-approved hours.',

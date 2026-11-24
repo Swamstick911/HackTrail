@@ -169,6 +169,82 @@ describe('platform HTTP boundary', () => {
       401,
     );
   });
+  it('lets a device revoke only its own credential', async () => {
+    const first = (
+      await call('POST', '/api/keys', { label: 'First device', scopes: ['write:activity'] })
+    ).json();
+    const second = (
+      await call('POST', '/api/keys', { label: 'Second device', scopes: ['write:activity'] })
+    ).json();
+    expect(
+      (
+        await call('DELETE', '/api/devices/current', undefined, '', {
+          authorization: 'Bearer ' + first.token,
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      (await call('POST', '/api/sync', {}, '', { authorization: 'Bearer ' + first.token }))
+        .statusCode,
+    ).toBe(401);
+    expect(store.key(second.token, 'write:activity')).toBeTruthy();
+  });
+  it('rejects sharing a changed report until it has been previewed again', async () => {
+    const project = (await call('POST', '/api/projects', { name: 'Report project' })).json();
+    const options = {
+      range: {
+        from: new Date(Date.now() - 60000).toISOString(),
+        to: new Date(Date.now() + 1000).toISOString(),
+      },
+      includeGit: false,
+      includeNotes: true,
+    };
+    const preview = (
+      await call('POST', '/api/projects/' + project.id + '/reports/preview', options)
+    ).json();
+    await call('POST', '/api/projects/' + project.id + '/notes', {
+      text: 'New disclosure after preview',
+    });
+    expect(
+      (
+        await call('POST', '/api/projects/' + project.id + '/reports', {
+          ...options,
+          fingerprint: preview.fingerprint,
+          expiresInDays: 1,
+        })
+      ).statusCode,
+    ).toBe(409);
+    const fresh = (
+      await call('POST', '/api/projects/' + project.id + '/reports/preview', options)
+    ).json();
+    expect(
+      (
+        await call('POST', '/api/projects/' + project.id + '/reports', {
+          ...options,
+          fingerprint: fresh.fingerprint,
+          expiresInDays: 1,
+        })
+      ).statusCode,
+    ).toBe(201);
+  });
+  it('accepts Basic-auth WakaTime bulk uploads and reports invalid entries individually', async () => {
+    const key = (
+      await call('POST', '/api/keys', { label: 'WakaTime', scopes: ['write:activity'] })
+    ).json();
+    const result = await call(
+      'POST',
+      '/api/v1/users/current/heartbeats.bulk',
+      [
+        { time: (Date.now() - 30000) / 1000, project: 'Waka project', type: 'file' },
+        { time: 'invalid' },
+        { time: Date.now() / 1000, project: 'Waka project', type: 'file' },
+      ],
+      '',
+      { authorization: 'Basic ' + Buffer.from(key.token + ':').toString('base64') },
+    );
+    expect(result.statusCode).toBe(201);
+    expect(result.json().responses.map((item: unknown[]) => item[1])).toEqual([202, 400, 202]);
+  });
   it('signs in through password verification and invalidates sessions on sign-out', async () => {
     expect(
       (

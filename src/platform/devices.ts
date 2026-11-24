@@ -69,6 +69,7 @@ export class DeviceAuthorization {
         status: 'approved' as const,
         token: key.token,
         deviceId: key.id,
+        accountId: row.owner_id,
         handle: this.store.profile(row.owner_id).handle,
       };
     })();
